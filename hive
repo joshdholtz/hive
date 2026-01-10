@@ -931,14 +931,18 @@ cmd_init() {
             local letter="${letters[$i]}"
             local wt_name="${name}-${letter}"
 
-            local lane
-            lane=$(prompt_input "Lane for $wt_name" "$wt_name")
+            echo ""
+            echo "Worker: $wt_name"
+            echo "  Purpose is used to assign tasks and name branches."
+            echo "  Example: 'api' creates branches like ${name}-${letter}/api/add-endpoint"
+            local purpose
+            purpose=$(prompt_input "Purpose/lane for $wt_name" "$name")
 
-            local branch_local branch_remote
-            branch_local=$(prompt_input "Local branch prefix for $wt_name" "" "background-$letter")
-            branch_remote=$(prompt_input "Remote branch prefix for $wt_name" "" "$letter")
+            # Auto-generate branch prefixes from purpose
+            local branch_local="${name}-${letter}/${purpose}"
+            local branch_remote="${letter}/${purpose}"
 
-            workers+=("$wt_name|$lane|$branch_local|$branch_remote")
+            workers+=("$wt_name|$purpose|$branch_local|$branch_remote")
             worker_ids+=("$wt_name")
           done
 
