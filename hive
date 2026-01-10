@@ -734,8 +734,54 @@ cmd_init() {
     # Skip common non-worker directories
     [[ "$name" == "node_modules" || "$name" == ".git" || "$name" == "vendor" || "$name" == "dist" || "$name" == "build" ]] && continue
 
+    # Check if this is a git repo (could create worktrees)
+    local is_git_repo=0
+    [[ -d "$d/.git" ]] && is_git_repo=1
+
     read -p "Include '$name' as worker? [y/N]: " include
     if [[ "$(lowercase "$include")" == "y" ]]; then
+
+      # If it's a git repo, offer to create worktrees
+      if [[ $is_git_repo -eq 1 ]]; then
+        read -p "  Create git worktrees for parallel workers? [y/N]: " use_worktrees
+        if [[ "$(lowercase "$use_worktrees")" == "y" ]]; then
+          read -p "  How many workers? [3]: " num_workers
+          num_workers="${num_workers:-3}"
+
+          echo "  Creating $num_workers worktrees..."
+          local letters=(a b c d e f g h i j)
+
+          for ((i=0; i<num_workers; i++)); do
+            local letter="${letters[$i]}"
+            local wt_name="${name}-${letter}"
+            local wt_path="$PWD/$wt_name"
+
+            if [[ ! -d "$wt_path" ]]; then
+              # Create worktree with a new branch
+              local branch_name="worker-${letter}"
+              (cd "$d" && git worktree add "$wt_path" -b "$branch_name" 2>/dev/null) || \
+              (cd "$d" && git worktree add "$wt_path" HEAD 2>/dev/null) || \
+                log_warn "    Failed to create worktree: $wt_name"
+            fi
+
+            if [[ -d "$wt_path" ]]; then
+              read -p "    Lane for $wt_name: " lane
+              lane="${lane:-$wt_name}"
+
+              read -p "    Local branch prefix (e.g., background-$letter/$lane): " branch_local
+              read -p "    Remote branch prefix (e.g., $letter/$lane): " branch_remote
+
+              workers+=("$wt_name|$lane|$branch_local|$branch_remote")
+              worker_ids+=("$wt_name")
+              echo "    Added worker: $wt_name"
+            fi
+          done
+
+          continue  # Skip adding the original repo as a worker
+        fi
+      fi
+
+      # Regular (non-worktree) worker
       local lane branch_local branch_remote
       read -p "  Lane name (default: $name): " lane
       lane="${lane:-$name}"
