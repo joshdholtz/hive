@@ -1017,17 +1017,16 @@ cmd_init() {
         windows+=("$win_name|$win_workers_str")
 
         # Remove selected workers from remaining
-        local -a new_remaining=()
+        local new_remaining=""
         for w in "${remaining_workers[@]}"; do
           local found=0
           for sel in "${win_worker_selection[@]}"; do
             [[ "$w" == "$sel" ]] && found=1 && break
           done
-          [[ $found -eq 0 ]] && new_remaining+=("$w")
+          [[ $found -eq 0 ]] && new_remaining="$new_remaining $w"
         done
-        # Safe assignment for potentially empty array (bash set -u compatibility)
-        remaining_workers=()
-        [[ ${#new_remaining[@]} -gt 0 ]] && remaining_workers=("${new_remaining[@]}")
+        # Convert back to array (safe for empty - just trims whitespace)
+        read -ra remaining_workers <<< "$new_remaining"
 
         [[ ${#remaining_workers[@]} -eq 0 ]] && break
         echo ""
