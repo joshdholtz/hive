@@ -428,7 +428,7 @@ generate_tmuxp_config() {
   session=$(yq -r '.session' "$config")
 
   local tmuxp_file
-  tmuxp_file=$(mktemp)
+  tmuxp_file=$(mktemp).yaml
 
   # Start YAML
   cat > "$tmuxp_file" <<EOF
