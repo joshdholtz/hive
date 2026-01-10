@@ -1,0 +1,31 @@
+# Example tasks.yaml for YAML task source
+# Each lane has: backlog, in_progress, done
+
+default:
+  backlog:
+    - title: Implement user authentication
+      description: Add login/logout functionality
+    - title: Add unit tests for auth module
+  in_progress: []
+  done: []
+
+reliability:
+  backlog:
+    - title: Add retry logic to API calls
+    - title: Implement circuit breaker pattern
+  in_progress: []
+  done: []
+
+features:
+  backlog:
+    - title: Add dark mode toggle
+    - title: Implement user preferences page
+  in_progress: []
+  done: []
+
+docs:
+  backlog:
+    - title: Update API documentation
+    - title: Add getting started guide
+  in_progress: []
+  done: []

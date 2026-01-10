@@ -1,0 +1,987 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+VERSION="1.0.0"
+SCRIPT_NAME="hive"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Timing parameters
+DEBOUNCE_SECONDS=10
+SETTLE_SECONDS=5
+GITHUB_POLL_INTERVAL=60
+MAX_RETRIES=60
+RETRY_INTERVAL=2
+
+# GitHub cache
+_GH_ITEMS_CACHE=""
+_GH_ITEMS_CACHE_TIME=0
+
+#------------------------------------------------------------------------------
+# Utility functions
+#------------------------------------------------------------------------------
+
+log_info() { echo -e "${BLUE}[info]${NC} $*"; }
+log_ok() { echo -e "${GREEN}[ok]${NC} $*"; }
+log_warn() { echo -e "${YELLOW}[warn]${NC} $*"; }
+log_error() { echo -e "${RED}[error]${NC} $*" >&2; }
+
+# Find .hive.yaml starting from current directory, walking up to root
+find_config() {
+  local dir="$PWD"
+  while [[ "$dir" != "/" ]]; do
+    if [[ -f "$dir/.hive.yaml" ]]; then
+      echo "$dir/.hive.yaml"
+      return 0
+    fi
+    dir="$(dirname "$dir")"
+  done
+  return 1
+}
+
+# Get project directory (parent of .hive.yaml)
+get_project_dir() {
+  local config="$1"
+  dirname "$config"
+}
+
+# Check dependencies
+check_dependencies() {
+  local config="${1:-}"
+  local missing=()
+
+  command -v yq &>/dev/null || missing+=("yq (brew install yq)")
+  command -v tmux &>/dev/null || missing+=("tmux (brew install tmux)")
+  command -v tmuxp &>/dev/null || missing+=("tmuxp (pip install tmuxp)")
+
+  if [[ -n "$config" && -f "$config" ]]; then
+    local backend task_source
+    backend=$(yq -r '.backend // "claude"' "$config")
+    task_source=$(yq -r '.tasks.source // "yaml"' "$config")
+
+    command -v "$backend" &>/dev/null || missing+=("$backend CLI")
+
+    if [[ "$task_source" == "github" ]]; then
+      command -v gh &>/dev/null || missing+=("gh (brew install gh)")
+      command -v jq &>/dev/null || missing+=("jq (brew install jq)")
+    fi
+  fi
+
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    log_error "Missing dependencies:"
+    for dep in "${missing[@]}"; do
+      echo "  - $dep"
+    done
+    return 1
+  fi
+  return 0
+}
+
+# Validate config file
+validate_config() {
+  local config="$1"
+
+  if [[ ! -f "$config" ]]; then
+    log_error "Config file not found: $config"
+    return 1
+  fi
+
+  local backend session
+  backend=$(yq -r '.backend // ""' "$config")
+  session=$(yq -r '.session // ""' "$config")
+
+  if [[ -z "$backend" ]]; then
+    log_error "'backend' is required in .hive.yaml (codex or claude)"
+    return 1
+  fi
+
+  if [[ "$backend" != "codex" && "$backend" != "claude" ]]; then
+    log_error "backend must be 'codex' or 'claude', got: $backend"
+    return 1
+  fi
+
+  if [[ -z "$session" ]]; then
+    log_error "'session' is required in .hive.yaml"
+    return 1
+  fi
+
+  local num_windows
+  num_windows=$(yq -r '.windows | length' "$config")
+  if [[ "$num_windows" -eq 0 ]]; then
+    log_error "At least one window with workers is required"
+    return 1
+  fi
+
+  return 0
+}
+
+#------------------------------------------------------------------------------
+# Worker list and task source functions
+#------------------------------------------------------------------------------
+
+# Build array of worker specs: "id|window|pane|lane|dir|branch_local|branch_remote"
+# Output: one spec per line
+build_worker_list() {
+  local config="$1"
+  local num_windows
+  num_windows=$(yq -r '.windows | length' "$config")
+
+  for ((w=0; w<num_windows; w++)); do
+    local window_name
+    window_name=$(yq -r ".windows[$w].name" "$config")
+
+    local num_workers
+    num_workers=$(yq -r ".windows[$w].workers | length" "$config")
+
+    for ((p=0; p<num_workers; p++)); do
+      local id lane dir branch_local branch_remote
+      id=$(yq -r ".windows[$w].workers[$p].id" "$config")
+      lane=$(yq -r ".windows[$w].workers[$p].lane // \"$id\"" "$config")
+      dir=$(yq -r ".windows[$w].workers[$p].dir // \".\"" "$config")
+      branch_local=$(yq -r ".windows[$w].workers[$p].branch.local // \"\"" "$config")
+      branch_remote=$(yq -r ".windows[$w].workers[$p].branch.remote // \"\"" "$config")
+
+      # tmux panes are 1-indexed
+      echo "$id|$window_name|$((p + 1))|$lane|$dir|$branch_local|$branch_remote"
+    done
+  done
+}
+
+# Refresh GitHub items cache
+gh_refresh_items() {
+  local config="$1"
+
+  local project_id org
+  project_id=$(yq -r '.tasks.github_project_id // ""' "$config")
+  org=$(yq -r '.tasks.github_org // ""' "$config")
+
+  if [[ -z "$project_id" ]]; then
+    log_error "github_project_id required for GitHub task source"
+    return 1
+  fi
+
+  local status_field lane_field
+  status_field=$(yq -r '.tasks.github_status_field_id // ""' "$config")
+  lane_field=$(yq -r '.tasks.github_lane_field_id // ""' "$config")
+
+  # GraphQL query to fetch project items
+  local query
+  query=$(cat <<'EOF'
+query($projectId: ID!) {
+  node(id: $projectId) {
+    ... on ProjectV2 {
+      items(first: 100) {
+        nodes {
+          id
+          fieldValues(first: 20) {
+            nodes {
+              ... on ProjectV2ItemFieldSingleSelectValue {
+                name
+                field { ... on ProjectV2SingleSelectField { name } }
+              }
+            }
+          }
+          content {
+            ... on DraftIssue { title }
+            ... on Issue { title number }
+            ... on PullRequest { title number }
+          }
+        }
+      }
+    }
+  }
+}
+EOF
+)
+
+  _GH_ITEMS_CACHE=$(gh api graphql -f query="$query" -F projectId="$project_id" 2>/dev/null || echo "{}")
+  _GH_ITEMS_CACHE_TIME=$(date +%s)
+}
+
+# Get task counts for a lane
+# Sets backlog_count and in_progress_count variables
+get_task_counts() {
+  local config="$1"
+  local lane="$2"
+  local -n _backlog_ref="$3"
+  local -n _in_progress_ref="$4"
+
+  local task_source
+  task_source=$(yq -r '.tasks.source // "yaml"' "$config")
+
+  if [[ "$task_source" == "github" ]]; then
+    # Check cache age
+    local now
+    now=$(date +%s)
+    if [[ -z "$_GH_ITEMS_CACHE" ]] || (( now - _GH_ITEMS_CACHE_TIME > 120 )); then
+      gh_refresh_items "$config"
+    fi
+
+    # Parse cached items for this lane
+    # Count items where Lane == lane AND Status == Backlog
+    _backlog_ref=$(echo "$_GH_ITEMS_CACHE" | jq --arg lane "$lane" '
+      [.data.node.items.nodes[] |
+        select(.fieldValues.nodes[] |
+          select(.field.name == "Lane" and .name == $lane)) |
+        select(.fieldValues.nodes[] |
+          select(.field.name == "Status" and .name == "Backlog"))
+      ] | length
+    ' 2>/dev/null || echo 0)
+
+    _in_progress_ref=$(echo "$_GH_ITEMS_CACHE" | jq --arg lane "$lane" '
+      [.data.node.items.nodes[] |
+        select(.fieldValues.nodes[] |
+          select(.field.name == "Lane" and .name == $lane)) |
+        select(.fieldValues.nodes[] |
+          select(.field.name == "Status" and .name == "In progress"))
+      ] | length
+    ' 2>/dev/null || echo 0)
+  else
+    # YAML task source
+    local tasks_file project_dir
+    project_dir=$(get_project_dir "$config")
+    tasks_file=$(yq -r '.tasks.file // "./tasks.yaml"' "$config")
+    tasks_file="$project_dir/$tasks_file"
+
+    if [[ ! -f "$tasks_file" ]]; then
+      _backlog_ref=0
+      _in_progress_ref=0
+      return
+    fi
+
+    # Try different YAML structures
+    _backlog_ref=$(yq -r ".\"$lane\".backlog | length // 0" "$tasks_file" 2>/dev/null || echo 0)
+    _in_progress_ref=$(yq -r ".\"$lane\".in_progress | length // 0" "$tasks_file" 2>/dev/null || echo 0)
+
+    # Handle null values
+    [[ "$_backlog_ref" == "null" ]] && _backlog_ref=0
+    [[ "$_in_progress_ref" == "null" ]] && _in_progress_ref=0
+  fi
+}
+
+#------------------------------------------------------------------------------
+# tmuxp generation
+#------------------------------------------------------------------------------
+
+generate_tmuxp_config() {
+  local config="$1"
+  local project_dir
+  project_dir=$(get_project_dir "$config")
+
+  local backend session
+  backend=$(yq -r '.backend' "$config")
+  session=$(yq -r '.session' "$config")
+
+  local tmuxp_file
+  tmuxp_file=$(mktemp)
+
+  # Start YAML
+  cat > "$tmuxp_file" <<EOF
+session_name: $session
+options:
+  pane-border-status: top
+  pane-border-format: " #{pane_title} "
+windows:
+EOF
+
+  # Iterate windows
+  local num_windows
+  num_windows=$(yq -r '.windows | length' "$config")
+
+  for ((w=0; w<num_windows; w++)); do
+    local window_name layout
+    window_name=$(yq -r ".windows[$w].name" "$config")
+    layout=$(yq -r ".windows[$w].layout // \"even-horizontal\"" "$config")
+
+    cat >> "$tmuxp_file" <<EOF
+  - window_name: $window_name
+    layout: $layout
+    panes:
+EOF
+
+    local num_workers
+    num_workers=$(yq -r ".windows[$w].workers | length" "$config")
+
+    for ((p=0; p<num_workers; p++)); do
+      local worker_id worker_dir worker_lane
+      worker_id=$(yq -r ".windows[$w].workers[$p].id" "$config")
+      worker_dir=$(yq -r ".windows[$w].workers[$p].dir // \".\"" "$config")
+      worker_lane=$(yq -r ".windows[$w].workers[$p].lane // \"$worker_id\"" "$config")
+
+      # Resolve to absolute path
+      local abs_dir="$project_dir/$worker_dir"
+      abs_dir=$(cd "$abs_dir" 2>/dev/null && pwd || echo "$abs_dir")
+
+      # Build agent command
+      local agent_cmd initial_msg
+      initial_msg="Read CLAUDE_ROLE.md if it exists. You are assigned to lane '$worker_lane'. Check your task backlog, claim ONE task, and work on it. Push a PR when done."
+
+      if [[ "$backend" == "codex" ]]; then
+        agent_cmd="env -u CODEX_SANDBOX -u CODEX_SANDBOX_NETWORK_DISABLED codex --sandbox danger-full-access --ask-for-approval \"never\" \"$initial_msg\""
+      else
+        agent_cmd="claude \"$initial_msg\""
+      fi
+
+      cat >> "$tmuxp_file" <<EOF
+      - shell_command:
+          - tmux select-pane -T "$worker_id"
+          - cd "$abs_dir"
+          - $agent_cmd
+EOF
+    done
+  done
+
+  # Add watch window
+  cat >> "$tmuxp_file" <<EOF
+  - window_name: watch
+    panes:
+      - shell_command:
+          - tmux select-pane -T "watcher"
+          - cd "$project_dir"
+          - hive watch
+EOF
+
+  echo "$tmuxp_file"
+}
+
+#------------------------------------------------------------------------------
+# Commands
+#------------------------------------------------------------------------------
+
+cmd_help() {
+  cat <<EOF
+${SCRIPT_NAME} v${VERSION} - AI Worker Orchestration
+
+USAGE:
+    ${SCRIPT_NAME} <command> [options]
+
+COMMANDS:
+    init              Create .hive.yaml interactively
+    up                Start worker session
+    stop              Stop worker session
+    nudge [worker]    Nudge idle workers (or specific one)
+    status            Show worker status and task counts
+    watch             Run watcher loop (internal, run by 'up')
+    role [worker]     Generate CLAUDE_ROLE.md for worker(s)
+    help              Show this help
+
+EXAMPLES:
+    ${SCRIPT_NAME} init                  # Create config interactively
+    ${SCRIPT_NAME} up                    # Start all workers
+    ${SCRIPT_NAME} status                # Check worker status
+    ${SCRIPT_NAME} nudge backend-a       # Nudge specific worker
+    ${SCRIPT_NAME} stop                  # Stop all workers
+
+CONFIG:
+    Place .hive.yaml in your project root. See 'hive init' to create one.
+EOF
+}
+
+cmd_up() {
+  local config
+  config=$(find_config) || { log_error "No .hive.yaml found. Run 'hive init' first."; exit 1; }
+
+  check_dependencies "$config" || exit 1
+  validate_config "$config" || exit 1
+
+  local session backend
+  session=$(yq -r '.session' "$config")
+  backend=$(yq -r '.backend' "$config")
+
+  # Check if session already exists
+  if tmux has-session -t "$session" 2>/dev/null; then
+    log_warn "Session '$session' already running"
+    read -p "Kill and restart? [y/N]: " restart
+    if [[ "${restart,,}" == "y" ]]; then
+      tmux kill-session -t "$session"
+    else
+      echo "Use 'hive stop' first, or attach with: tmux attach -t $session"
+      exit 1
+    fi
+  fi
+
+  # Clear codex env vars if needed
+  if [[ "$backend" == "codex" ]]; then
+    tmux set-environment -gu CODEX_SANDBOX 2>/dev/null || true
+    tmux set-environment -gu CODEX_SANDBOX_NETWORK_DISABLED 2>/dev/null || true
+  fi
+
+  # Generate and load tmuxp config
+  log_info "Generating tmux configuration..."
+  local tmuxp_file
+  tmuxp_file=$(generate_tmuxp_config "$config")
+
+  log_info "Starting session: $session"
+  tmuxp load "$tmuxp_file"
+
+  rm -f "$tmuxp_file"
+
+  # Brief delay then initial nudge
+  sleep 0.6
+  cmd_nudge || true
+
+  log_ok "Session started"
+  echo "Attach with: tmux attach -t $session"
+}
+
+cmd_stop() {
+  local config
+  config=$(find_config) || { log_error "No .hive.yaml found"; exit 1; }
+
+  local session
+  session=$(yq -r '.session' "$config")
+
+  if tmux has-session -t "$session" 2>/dev/null; then
+    log_info "Stopping session: $session"
+    tmux kill-session -t "$session"
+    log_ok "Session stopped"
+  else
+    log_warn "Session '$session' not running"
+  fi
+}
+
+cmd_nudge() {
+  local specific_worker="${1:-}"
+
+  local config
+  config=$(find_config) || { log_error "No .hive.yaml found"; exit 1; }
+
+  local session task_source
+  session=$(yq -r '.session' "$config")
+  task_source=$(yq -r '.tasks.source // "yaml"' "$config")
+
+  # Verify session exists
+  if ! tmux has-session -t "$session" 2>/dev/null; then
+    log_error "Session '$session' not running"
+    return 1
+  fi
+
+  log_info "Analyzing workers... (source: $task_source)"
+
+  # Pre-fetch GitHub items if needed
+  if [[ "$task_source" == "github" ]]; then
+    gh_refresh_items "$config" || true
+  fi
+
+  local nudged=0
+
+  while IFS='|' read -r id window pane lane dir branch_local branch_remote; do
+    [[ -z "$id" ]] && continue
+
+    # Skip if targeting specific worker and this isn't it
+    [[ -n "$specific_worker" && "$id" != "$specific_worker" ]] && continue
+
+    # Get task counts
+    local backlog_count=0 in_progress_count=0
+    get_task_counts "$config" "$lane" backlog_count in_progress_count
+
+    # Only nudge if has backlog and not busy
+    if [[ "$backlog_count" -gt 0 && "$in_progress_count" -eq 0 ]]; then
+      # Build nudge message
+      local msg="FIRST: If you have uncommitted changes or an unpushed branch from a previous task, push it to a PR NOW before starting anything new. You have $backlog_count task(s) in your backlog for lane '$lane'. Claim ONE task and work on it."
+
+      # Add branch naming convention if configured
+      if [[ -n "$branch_local" && -n "$branch_remote" ]]; then
+        msg="$msg IMPORTANT: Your LOCAL branch names MUST start with '$branch_local/' (e.g. '$branch_local/my-feature'). Push to remote with: git push origin $branch_local/my-feature:$branch_remote/my-feature"
+      fi
+
+      # Send to tmux pane
+      tmux send-keys -t "$session:$window.$pane" -l "$msg"
+      sleep 0.1
+      tmux send-keys -t "$session:$window.$pane" Enter
+
+      echo "  -> $id ($window:$pane): $backlog_count task(s)"
+      nudged=1
+    fi
+  done < <(build_worker_list "$config")
+
+  if [[ $nudged -eq 1 ]]; then
+    log_ok "Nudged idle workers with pending tasks"
+  else
+    log_info "No idle workers with pending tasks"
+  fi
+}
+
+cmd_status() {
+  local config
+  config=$(find_config) || { log_error "No .hive.yaml found"; exit 1; }
+
+  local session task_source backend
+  session=$(yq -r '.session' "$config")
+  task_source=$(yq -r '.tasks.source // "yaml"' "$config")
+  backend=$(yq -r '.backend' "$config")
+
+  echo ""
+  echo "Session: $session"
+  echo "Backend: $backend"
+  echo "Task Source: $task_source"
+
+  if tmux has-session -t "$session" 2>/dev/null; then
+    echo -e "Status: ${GREEN}RUNNING${NC}"
+  else
+    echo -e "Status: ${RED}STOPPED${NC}"
+  fi
+  echo ""
+
+  # Pre-fetch GitHub items if needed
+  if [[ "$task_source" == "github" ]]; then
+    gh_refresh_items "$config" || true
+  fi
+
+  # Worker table header
+  printf "%-20s %-15s %-10s %-12s\n" "WORKER" "LANE" "BACKLOG" "IN_PROGRESS"
+  printf "%-20s %-15s %-10s %-12s\n" "------" "----" "-------" "-----------"
+
+  while IFS='|' read -r id window pane lane dir branch_local branch_remote; do
+    [[ -z "$id" ]] && continue
+
+    local backlog_count=0 in_progress_count=0
+    get_task_counts "$config" "$lane" backlog_count in_progress_count
+
+    printf "%-20s %-15s %-10s %-12s\n" "$id" "$lane" "$backlog_count" "$in_progress_count"
+  done < <(build_worker_list "$config")
+
+  echo ""
+}
+
+cmd_watch() {
+  local config
+  config=$(find_config) || { log_error "No .hive.yaml found"; exit 1; }
+
+  local session task_source
+  session=$(yq -r '.session' "$config")
+  task_source=$(yq -r '.tasks.source // "yaml"' "$config")
+
+  log_info "Hive watcher starting..."
+  log_info "Task source: $task_source"
+
+  # Wait for all windows to be ready
+  log_info "Waiting for windows..."
+  local retries=0
+  while true; do
+    local all_ready=1
+    local num_windows
+    num_windows=$(yq -r '.windows | length' "$config")
+
+    for ((w=0; w<num_windows; w++)); do
+      local window_name
+      window_name=$(yq -r ".windows[$w].name" "$config")
+
+      if ! tmux list-windows -t "$session" -F "#{window_name}" 2>/dev/null | grep -qx "$window_name"; then
+        all_ready=0
+        break
+      fi
+    done
+
+    [[ $all_ready -eq 1 ]] && break
+
+    retries=$((retries + 1))
+    if ((retries > MAX_RETRIES)); then
+      log_error "Timeout waiting for windows"
+      exit 1
+    fi
+
+    sleep "$RETRY_INTERVAL"
+  done
+  log_ok "All windows ready"
+
+  # Initial nudge
+  cmd_nudge || true
+
+  # Watch loop
+  local last_nudge=0
+
+  if [[ "$task_source" == "github" ]]; then
+    log_info "Polling GitHub every ${GITHUB_POLL_INTERVAL}s"
+    echo "Press Ctrl+C to stop"
+    echo ""
+
+    while true; do
+      sleep "$GITHUB_POLL_INTERVAL"
+      echo "[$(date +%H:%M:%S)] Polling GitHub..."
+      cmd_nudge 2>/dev/null || true
+    done
+  else
+    local tasks_file project_dir
+    project_dir=$(get_project_dir "$config")
+    tasks_file=$(yq -r '.tasks.file // "./tasks.yaml"' "$config")
+    tasks_file="$project_dir/$tasks_file"
+
+    if command -v fswatch &>/dev/null; then
+      log_info "Watching: $tasks_file (fswatch)"
+      echo "Press Ctrl+C to stop"
+      echo ""
+
+      fswatch -o "$tasks_file" 2>/dev/null | while read -r _; do
+        local now
+        now=$(date +%s)
+        local elapsed=$((now - last_nudge))
+
+        if (( elapsed < DEBOUNCE_SECONDS )); then
+          echo "[$(date +%H:%M:%S)] Change detected, debouncing..."
+          continue
+        fi
+
+        echo "[$(date +%H:%M:%S)] File changed, waiting to settle..."
+        sleep "$SETTLE_SECONDS"
+
+        last_nudge=$(date +%s)
+        cmd_nudge 2>/dev/null || true
+      done
+    else
+      log_info "Watching: $tasks_file (polling)"
+      log_warn "Install fswatch for better performance: brew install fswatch"
+      echo "Press Ctrl+C to stop"
+      echo ""
+
+      local last_mtime
+      last_mtime=$(stat -f %m "$tasks_file" 2>/dev/null || stat -c %Y "$tasks_file" 2>/dev/null || echo 0)
+
+      while true; do
+        sleep 1
+        local mtime
+        mtime=$(stat -f %m "$tasks_file" 2>/dev/null || stat -c %Y "$tasks_file" 2>/dev/null || echo 0)
+
+        if [[ "$mtime" != "$last_mtime" ]]; then
+          last_mtime="$mtime"
+
+          local now
+          now=$(date +%s)
+          local elapsed=$((now - last_nudge))
+
+          if (( elapsed < DEBOUNCE_SECONDS )); then
+            echo "[$(date +%H:%M:%S)] Change detected, debouncing..."
+            continue
+          fi
+
+          echo "[$(date +%H:%M:%S)] File changed, waiting to settle..."
+          sleep "$SETTLE_SECONDS"
+
+          last_nudge=$(date +%s)
+          cmd_nudge 2>/dev/null || true
+        fi
+      done
+    fi
+  fi
+}
+
+cmd_init() {
+  echo ""
+  echo "Hive Configuration Wizard"
+  echo "========================="
+  echo ""
+
+  # Check if config already exists
+  if [[ -f ".hive.yaml" ]]; then
+    log_warn ".hive.yaml already exists"
+    read -p "Overwrite? [y/N]: " overwrite
+    [[ "${overwrite,,}" != "y" ]] && exit 0
+  fi
+
+  # Step 1: Backend
+  local backend
+  read -p "AI backend [claude/codex] (default: claude): " backend
+  backend="${backend:-claude}"
+  if [[ "$backend" != "claude" && "$backend" != "codex" ]]; then
+    log_error "Invalid backend: $backend"
+    exit 1
+  fi
+
+  # Step 2: Session name
+  local session default_session
+  default_session=$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | tr ' _' '-')
+  read -p "Session name (default: $default_session): " session
+  session="${session:-$default_session}"
+
+  # Step 3: Task source
+  local task_source
+  read -p "Task source [yaml/github] (default: yaml): " task_source
+  task_source="${task_source:-yaml}"
+
+  local tasks_file="" github_project="" github_org="" github_project_id=""
+  local github_status_field="" github_lane_field=""
+
+  if [[ "$task_source" == "github" ]]; then
+    read -p "GitHub org name: " github_org
+    read -p "GitHub Project number: " github_project
+    read -p "GitHub Project ID (PVT_...): " github_project_id
+    read -p "Status field ID (PVTSSF_...): " github_status_field
+    read -p "Lane field ID (PVTSSF_...): " github_lane_field
+  else
+    read -p "Tasks file (default: ./tasks.yaml): " tasks_file
+    tasks_file="${tasks_file:-./tasks.yaml}"
+  fi
+
+  # Step 4: Scan directories
+  echo ""
+  echo "Scanning for subdirectories..."
+
+  local -a workers=()
+  local -a worker_ids=()
+
+  for d in */; do
+    [[ ! -d "$d" ]] && continue
+    local name="${d%/}"
+
+    # Skip common non-worker directories
+    [[ "$name" == "node_modules" || "$name" == ".git" || "$name" == "vendor" || "$name" == "dist" || "$name" == "build" ]] && continue
+
+    read -p "Include '$name' as worker? [y/N]: " include
+    if [[ "${include,,}" == "y" ]]; then
+      local lane branch_local branch_remote
+      read -p "  Lane name (default: $name): " lane
+      lane="${lane:-$name}"
+
+      read -p "  Local branch prefix (leave empty for none): " branch_local
+      read -p "  Remote branch prefix (leave empty for none): " branch_remote
+
+      workers+=("$name|$lane|$branch_local|$branch_remote")
+      worker_ids+=("$name")
+    fi
+  done
+
+  if [[ ${#workers[@]} -eq 0 ]]; then
+    log_warn "No workers added. Creating minimal config."
+  fi
+
+  # Step 5: Group into windows
+  echo ""
+  local -a windows=()
+
+  if [[ ${#workers[@]} -gt 0 ]]; then
+    read -p "Group all workers into one window? [Y/n]: " single_window
+    if [[ "${single_window,,}" != "n" ]]; then
+      local window_name
+      read -p "Window name (default: workers): " window_name
+      window_name="${window_name:-workers}"
+      windows+=("$window_name|${worker_ids[*]}")
+    else
+      echo "Enter window groupings (comma-separated worker IDs):"
+      while true; do
+        local win_name win_workers
+        read -p "Window name (or 'done'): " win_name
+        [[ "$win_name" == "done" || -z "$win_name" ]] && break
+        read -p "  Workers (comma-separated): " win_workers
+        windows+=("$win_name|$win_workers")
+      done
+    fi
+  fi
+
+  # Step 6: Generate config
+  echo ""
+  log_info "Generating .hive.yaml..."
+
+  cat > .hive.yaml <<EOF
+backend: $backend
+session: $session
+
+tasks:
+  source: $task_source
+EOF
+
+  if [[ "$task_source" == "github" ]]; then
+    cat >> .hive.yaml <<EOF
+  github_org: $github_org
+  github_project: $github_project
+  github_project_id: $github_project_id
+  github_status_field_id: $github_status_field
+  github_lane_field_id: $github_lane_field
+EOF
+  else
+    cat >> .hive.yaml <<EOF
+  file: $tasks_file
+EOF
+  fi
+
+  if [[ ${#windows[@]} -gt 0 ]]; then
+    cat >> .hive.yaml <<EOF
+
+windows:
+EOF
+
+    for win_spec in "${windows[@]}"; do
+      IFS='|' read -r win_name win_worker_list <<< "$win_spec"
+
+      cat >> .hive.yaml <<EOF
+  - name: $win_name
+    layout: even-horizontal
+    workers:
+EOF
+
+      # Find workers for this window
+      for worker_spec in "${workers[@]}"; do
+        IFS='|' read -r w_id w_lane w_bl w_br <<< "$worker_spec"
+
+        # Check if this worker is in this window
+        if [[ " $win_worker_list " == *" $w_id "* ]] || [[ "$win_worker_list" == *"$w_id"* ]]; then
+          cat >> .hive.yaml <<EOF
+      - id: $w_id
+        dir: ./$w_id
+        lane: $w_lane
+EOF
+          if [[ -n "$w_bl" || -n "$w_br" ]]; then
+            cat >> .hive.yaml <<EOF
+        branch:
+          local: "$w_bl"
+          remote: "$w_br"
+EOF
+          fi
+        fi
+      done
+    done
+  else
+    # Create placeholder window
+    cat >> .hive.yaml <<EOF
+
+windows:
+  - name: workers
+    layout: even-horizontal
+    workers:
+      - id: example
+        dir: .
+        lane: default
+EOF
+  fi
+
+  log_ok "Created .hive.yaml"
+  echo ""
+
+  # Offer to generate role files
+  if [[ ${#workers[@]} -gt 0 ]]; then
+    read -p "Generate CLAUDE_ROLE.md files for workers? [Y/n]: " gen_roles
+    if [[ "${gen_roles,,}" != "n" ]]; then
+      cmd_role
+    fi
+  fi
+
+  echo ""
+  echo "Next steps:"
+  echo "  1. Review .hive.yaml"
+  echo "  2. Run 'hive up' to start workers"
+}
+
+cmd_role() {
+  local specific_worker="${1:-}"
+
+  local config
+  config=$(find_config) || { log_error "No .hive.yaml found"; exit 1; }
+
+  local project_dir task_source
+  project_dir=$(get_project_dir "$config")
+  task_source=$(yq -r '.tasks.source // "yaml"' "$config")
+
+  while IFS='|' read -r id window pane lane dir branch_local branch_remote; do
+    [[ -z "$id" ]] && continue
+
+    # Skip if targeting specific worker
+    [[ -n "$specific_worker" && "$id" != "$specific_worker" ]] && continue
+
+    local abs_dir="$project_dir/$dir"
+    local role_file="$abs_dir/CLAUDE_ROLE.md"
+
+    # Check if custom content exists
+    local custom_content=""
+    if [[ -f "$role_file" ]]; then
+      # Extract content after "## Project-Specific Instructions"
+      custom_content=$(sed -n '/^## Project-Specific Instructions/,$p' "$role_file" | tail -n +2)
+    fi
+
+    log_info "Generating $role_file"
+
+    cat > "$role_file" <<EOF
+# Worker Role: $id
+
+You are a background worker assigned to lane **$lane**.
+
+## General Behavior
+1. Check your task backlog and claim ONE task at a time
+2. Implement the task completely
+3. Push your work to a PR before claiming the next task
+4. If you have uncommitted changes from a previous task, push them first
+5. Do NOT start a new task until the previous one has a PR created
+
+EOF
+
+    # Add branch naming if configured
+    if [[ -n "$branch_local" && -n "$branch_remote" ]]; then
+      cat >> "$role_file" <<EOF
+## Branch Naming Convention
+- Create local branches with prefix: \`$branch_local/\`
+- Example: \`$branch_local/my-feature\`
+- Push command: \`git push origin $branch_local/my-feature:$branch_remote/my-feature\`
+
+EOF
+    fi
+
+    # Add task source instructions
+    if [[ "$task_source" == "github" ]]; then
+      local github_project
+      github_project=$(yq -r '.tasks.github_project // ""' "$config")
+      cat >> "$role_file" <<EOF
+## Task Source
+Tasks are managed in GitHub Project #$github_project.
+- View your lane's backlog in the project board
+- Move tasks to "In Progress" when you start
+- Move tasks to "Done" when PR is merged
+
+EOF
+    else
+      local tasks_file
+      tasks_file=$(yq -r '.tasks.file // "./tasks.yaml"' "$config")
+      cat >> "$role_file" <<EOF
+## Task Source
+Tasks are managed in \`$tasks_file\`.
+- Your lane: \`$lane\`
+- Check the \`backlog\` section for pending tasks
+- Move tasks to \`in_progress\` when you start
+- Move tasks to \`done\` when complete
+
+EOF
+    fi
+
+    # Add custom content section
+    cat >> "$role_file" <<EOF
+---
+## Project-Specific Instructions
+<!-- Add your custom instructions below this line -->
+EOF
+
+    if [[ -n "$custom_content" ]]; then
+      echo "$custom_content" >> "$role_file"
+    else
+      echo "" >> "$role_file"
+    fi
+
+  done < <(build_worker_list "$config")
+
+  log_ok "Role files generated"
+}
+
+#------------------------------------------------------------------------------
+# Main
+#------------------------------------------------------------------------------
+
+main() {
+  local cmd="${1:-help}"
+  shift || true
+
+  case "$cmd" in
+    init) cmd_init "$@" ;;
+    up) cmd_up "$@" ;;
+    stop) cmd_stop "$@" ;;
+    nudge) cmd_nudge "$@" ;;
+    status) cmd_status "$@" ;;
+    watch) cmd_watch "$@" ;;
+    role) cmd_role "$@" ;;
+    -h|--help|help) cmd_help ;;
+    -v|--version) echo "$SCRIPT_NAME v$VERSION" ;;
+    *) log_error "Unknown command: $cmd"; cmd_help; exit 1 ;;
+  esac
+}
+
+main "$@"

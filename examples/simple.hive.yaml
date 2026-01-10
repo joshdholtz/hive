@@ -1,0 +1,17 @@
+# Simple single-repo configuration
+# Place this in your project root as .hive.yaml
+
+backend: claude
+session: my-project
+
+tasks:
+  source: yaml
+  file: ./tasks.yaml
+
+windows:
+  - name: workers
+    layout: even-horizontal
+    workers:
+      - id: main
+        dir: .
+        lane: default

@@ -1,0 +1,49 @@
+# Multi-worker configuration with GitHub Projects
+# Place this in your project root as .hive.yaml
+
+backend: codex
+session: my-backend
+
+tasks:
+  source: github
+  github_org: My-Organization
+  github_project: 4
+  github_project_id: PVT_kwXXXXXX
+  github_status_field_id: PVTSSF_statusXXX
+  github_lane_field_id: PVTSSF_laneXXX
+
+windows:
+  - name: backend
+    layout: even-horizontal
+    workers:
+      - id: backend-a
+        dir: ./backend-clone-a
+        lane: reliability
+        branch:
+          local: "background-a/reliability"
+          remote: "a/reliability"
+
+      - id: backend-b
+        dir: ./backend-clone-b
+        lane: features
+        branch:
+          local: "background-b/features"
+          remote: "b/features"
+
+      - id: backend-c
+        dir: ./backend-clone-c
+        lane: observability
+        branch:
+          local: "background-c/observability"
+          remote: "c/observability"
+
+  - name: support
+    layout: even-horizontal
+    workers:
+      - id: docs
+        dir: ./docs
+        lane: docs
+
+      - id: tools
+        dir: ./tools
+        lane: tools
