@@ -34,6 +34,130 @@ log_error() { echo -e "${RED}[error]${NC} $*" >&2; }
 # Portable lowercase (works in bash 3, zsh, etc.)
 lowercase() { echo "$1" | tr '[:upper:]' '[:lower:]'; }
 
+# Check if gum is available for fancy prompts
+has_gum() { command -v gum &>/dev/null; }
+
+#------------------------------------------------------------------------------
+# Interactive prompt helpers (gum with fallback)
+#------------------------------------------------------------------------------
+
+# Confirm yes/no prompt. Returns 0 for yes, 1 for no.
+# Usage: prompt_confirm "Question?" && echo "yes"
+prompt_confirm() {
+  local prompt="$1"
+  local default="${2:-n}"  # y or n
+
+  if has_gum; then
+    if [[ "$default" == "y" ]]; then
+      gum confirm --default=yes "$prompt"
+    else
+      gum confirm --default=no "$prompt"
+    fi
+  else
+    local yn
+    if [[ "$default" == "y" ]]; then
+      read -p "$prompt [Y/n]: " yn
+      yn="${yn:-y}"
+    else
+      read -p "$prompt [y/N]: " yn
+      yn="${yn:-n}"
+    fi
+    [[ "$(lowercase "$yn")" == "y" ]]
+  fi
+}
+
+# Text input prompt
+# Usage: result=$(prompt_input "Prompt" "default" "placeholder")
+prompt_input() {
+  local prompt="$1"
+  local default="${2:-}"
+  local placeholder="${3:-$default}"
+
+  if has_gum; then
+    local result
+    if [[ -n "$default" ]]; then
+      result=$(gum input --header "$prompt" --placeholder "$placeholder" --value "$default")
+    else
+      result=$(gum input --header "$prompt" --placeholder "$placeholder")
+    fi
+    echo "${result:-$default}"
+  else
+    local result
+    if [[ -n "$default" ]]; then
+      read -p "$prompt (default: $default): " result
+    else
+      read -p "$prompt: " result
+    fi
+    echo "${result:-$default}"
+  fi
+}
+
+# Single choice from options
+# Usage: result=$(prompt_choose "Header" "opt1" "opt2" "opt3")
+prompt_choose() {
+  local header="$1"
+  shift
+  local options=("$@")
+
+  if has_gum; then
+    gum choose --header "$header" "${options[@]}"
+  else
+    echo "$header" >&2
+    local i=1
+    for opt in "${options[@]}"; do
+      echo "  $i) $opt" >&2
+      ((i++))
+    done
+    local choice
+    read -p "Enter number: " choice
+    if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#options[@]})); then
+      echo "${options[$((choice-1))]}"
+    else
+      echo "${options[0]}"
+    fi
+  fi
+}
+
+# Multi-select from options (returns newline-separated selections)
+# Usage: readarray -t selected < <(prompt_multi "Header" "${options[@]}")
+prompt_multi() {
+  local header="$1"
+  shift
+  local options=("$@")
+
+  if has_gum; then
+    gum choose --no-limit --header "$header" "${options[@]}"
+  else
+    echo "$header" >&2
+    local i=1
+    for opt in "${options[@]}"; do
+      echo "  $i) $opt" >&2
+      ((i++))
+    done
+    echo "Enter numbers separated by commas, ranges (1-3), or 'all'" >&2
+    local selection
+    read -p "Selection: " selection
+
+    if [[ "$(lowercase "$selection")" == "all" ]]; then
+      printf '%s\n' "${options[@]}"
+    else
+      IFS=',' read -ra parts <<< "$selection"
+      for part in "${parts[@]}"; do
+        part=$(echo "$part" | tr -d ' ')
+        if [[ "$part" == *-* ]]; then
+          local start="${part%-*}"
+          local end="${part#*-}"
+          for ((j=start; j<=end; j++)); do
+            [[ $j -ge 1 && $j -le ${#options[@]} ]] && echo "${options[$((j-1))]}"
+          done
+        elif [[ "$part" =~ ^[0-9]+$ ]]; then
+          [[ $part -ge 1 && $part -le ${#options[@]} ]] && echo "${options[$((part-1))]}"
+        fi
+      done
+    fi
+  fi
+}
+
 # Find .hive.yaml starting from current directory, walking up to root
 find_config() {
   local dir="$PWD"
@@ -399,8 +523,7 @@ cmd_up() {
   # Check if session already exists
   if tmux has-session -t "$session" 2>/dev/null; then
     log_warn "Session '$session' already running"
-    read -p "Kill and restart? [y/N]: " restart
-    if [[ "$(lowercase "$restart")" == "y" ]]; then
+    if prompt_confirm "Kill and restart?"; then
       tmux kill-session -t "$session"
     else
       echo "Use 'hive stop' first, or attach with: tmux attach -t $session"
@@ -674,58 +797,55 @@ cmd_watch() {
 }
 
 cmd_init() {
-  echo ""
-  echo "Hive Configuration Wizard"
-  echo "========================="
+  if has_gum; then
+    gum style --border double --padding "0 2" --border-foreground 212 "Hive Configuration Wizard"
+  else
+    echo ""
+    echo "Hive Configuration Wizard"
+    echo "========================="
+  fi
   echo ""
 
   # Check if config already exists
   if [[ -f ".hive.yaml" ]]; then
     log_warn ".hive.yaml already exists"
-    read -p "Overwrite? [y/N]: " overwrite
-    [[ "$(lowercase "$overwrite")" != "y" ]] && exit 0
+    prompt_confirm "Overwrite existing config?" || exit 0
   fi
 
   # Step 1: Backend
   local backend
-  read -p "AI backend [claude/codex] (default: claude): " backend
-  backend="${backend:-claude}"
-  if [[ "$backend" != "claude" && "$backend" != "codex" ]]; then
-    log_error "Invalid backend: $backend"
-    exit 1
-  fi
+  backend=$(prompt_choose "Select AI backend:" "claude" "codex")
 
   # Step 2: Session name
-  local session default_session
+  local default_session
   default_session=$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | tr ' _' '-')
-  read -p "Session name (default: $default_session): " session
-  session="${session:-$default_session}"
+  local session
+  session=$(prompt_input "Session name" "$default_session")
 
   # Step 3: Task source
   local task_source
-  read -p "Task source [yaml/github] (default: yaml): " task_source
-  task_source="${task_source:-yaml}"
+  task_source=$(prompt_choose "Select task source:" "yaml" "github")
 
   local tasks_file="" github_project="" github_org="" github_project_id=""
   local github_status_field="" github_lane_field=""
 
   if [[ "$task_source" == "github" ]]; then
-    read -p "GitHub org name: " github_org
-    read -p "GitHub Project number: " github_project
-    read -p "GitHub Project ID (PVT_...): " github_project_id
-    read -p "Status field ID (PVTSSF_...): " github_status_field
-    read -p "Lane field ID (PVTSSF_...): " github_lane_field
+    github_org=$(prompt_input "GitHub org name" "" "my-org")
+    github_project=$(prompt_input "GitHub Project number" "" "1")
+    github_project_id=$(prompt_input "GitHub Project ID" "" "PVT_...")
+    github_status_field=$(prompt_input "Status field ID" "" "PVTSSF_...")
+    github_lane_field=$(prompt_input "Lane field ID" "" "PVTSSF_...")
   else
-    read -p "Tasks file (default: ./tasks.yaml): " tasks_file
-    tasks_file="${tasks_file:-./tasks.yaml}"
+    tasks_file=$(prompt_input "Tasks file path" "./tasks.yaml")
   fi
 
-  # Step 4: Scan directories
+  # Step 4: Scan and select directories
   echo ""
-  echo "Scanning for subdirectories..."
+  log_info "Scanning for subdirectories..."
 
-  local -a workers=()
-  local -a worker_ids=()
+  local -a available_dirs=()
+  local -a display_names=()
+  declare -A dir_is_git=()
 
   for d in */; do
     [[ ! -d "$d" ]] && continue
@@ -734,47 +854,72 @@ cmd_init() {
     # Skip common non-worker directories
     [[ "$name" == "node_modules" || "$name" == ".git" || "$name" == "vendor" || "$name" == "dist" || "$name" == "build" ]] && continue
 
-    # Check if this is a git repo (could create worktrees)
-    local is_git_repo=0
-    [[ -d "$d/.git" ]] && is_git_repo=1
+    available_dirs+=("$name")
+    if [[ -d "$d/.git" ]]; then
+      display_names+=("$name [git]")
+      dir_is_git["$name"]=1
+    else
+      display_names+=("$name")
+      dir_is_git["$name"]=0
+    fi
+  done
 
-    read -p "Include '$name' as worker? [y/N]: " include
-    if [[ "$(lowercase "$include")" == "y" ]]; then
+  local -a workers=()
+  local -a worker_ids=()
+  local -a pending_worktrees=()
+
+  if [[ ${#available_dirs[@]} -eq 0 ]]; then
+    log_warn "No subdirectories found."
+  else
+    # Multi-select directories
+    echo ""
+    local -a selected_display=()
+    readarray -t selected_display < <(prompt_multi "Select directories to include as workers:" "${display_names[@]}")
+
+    # Extract actual directory names (strip " [git]" suffix)
+    local -a selected_dirs=()
+    for sel in "${selected_display[@]}"; do
+      [[ -z "$sel" ]] && continue
+      local dir_name="${sel% \[git\]}"
+      selected_dirs+=("$dir_name")
+    done
+
+    # Configure each selected directory
+    for name in "${selected_dirs[@]}"; do
+      local is_git="${dir_is_git[$name]:-0}"
+
+      echo ""
+      if has_gum; then
+        gum style --foreground 212 "Configuring: $name"
+      else
+        echo "--- Configuring: $name ---"
+      fi
 
       # If it's a git repo, offer to create worktrees
-      if [[ $is_git_repo -eq 1 ]]; then
-        read -p "  Create git worktrees for parallel workers? [y/N]: " use_worktrees
-        if [[ "$(lowercase "$use_worktrees")" == "y" ]]; then
-          read -p "  How many workers? [3]: " num_workers
-          num_workers="${num_workers:-3}"
+      if [[ "$is_git" == "1" ]]; then
+        if prompt_confirm "Create git worktrees for parallel workers?"; then
+          local num_workers
+          num_workers=$(prompt_input "How many workers?" "3")
 
-          echo "  Creating $num_workers worktrees..."
+          log_info "Configuring $num_workers worktrees (will be created at end)..."
           local letters=(a b c d e f g h i j)
+
+          # Store worktree request for later creation
+          pending_worktrees+=("$name|$num_workers")
 
           for ((i=0; i<num_workers; i++)); do
             local letter="${letters[$i]}"
             local wt_name="${name}-${letter}"
-            local wt_path="$PWD/$wt_name"
 
-            if [[ ! -d "$wt_path" ]]; then
-              # Create worktree with a new branch
-              local branch_name="worker-${letter}"
-              (cd "$d" && git worktree add "$wt_path" -b "$branch_name" 2>/dev/null) || \
-              (cd "$d" && git worktree add "$wt_path" HEAD 2>/dev/null) || \
-                log_warn "    Failed to create worktree: $wt_name"
-            fi
+            local lane
+            lane=$(prompt_input "Lane for $wt_name" "$wt_name")
 
-            if [[ -d "$wt_path" ]]; then
-              read -p "    Lane for $wt_name: " lane
-              lane="${lane:-$wt_name}"
+            local branch_local branch_remote
+            branch_local=$(prompt_input "Local branch prefix for $wt_name" "" "background-$letter")
+            branch_remote=$(prompt_input "Remote branch prefix for $wt_name" "" "$letter")
 
-              read -p "    Local branch prefix (e.g., background-$letter/$lane): " branch_local
-              read -p "    Remote branch prefix (e.g., $letter/$lane): " branch_remote
-
-              workers+=("$wt_name|$lane|$branch_local|$branch_remote")
-              worker_ids+=("$wt_name")
-              echo "    Added worker: $wt_name"
-            fi
+            workers+=("$wt_name|$lane|$branch_local|$branch_remote")
+            worker_ids+=("$wt_name")
           done
 
           continue  # Skip adding the original repo as a worker
@@ -782,17 +927,21 @@ cmd_init() {
       fi
 
       # Regular (non-worktree) worker
-      local lane branch_local branch_remote
-      read -p "  Lane name (default: $name): " lane
-      lane="${lane:-$name}"
+      local lane
+      lane=$(prompt_input "Lane name" "$name")
 
-      read -p "  Local branch prefix (leave empty for none): " branch_local
-      read -p "  Remote branch prefix (leave empty for none): " branch_remote
+      local branch_local branch_remote
+      branch_local=$(prompt_input "Local branch prefix" "" "leave empty for none")
+      branch_remote=$(prompt_input "Remote branch prefix" "" "leave empty for none")
+
+      # Clear "leave empty" placeholders
+      [[ "$branch_local" == "leave empty for none" ]] && branch_local=""
+      [[ "$branch_remote" == "leave empty for none" ]] && branch_remote=""
 
       workers+=("$name|$lane|$branch_local|$branch_remote")
       worker_ids+=("$name")
-    fi
-  done
+    done
+  fi
 
   if [[ ${#workers[@]} -eq 0 ]]; then
     log_warn "No workers added. Creating minimal config."
@@ -803,20 +952,25 @@ cmd_init() {
   local -a windows=()
 
   if [[ ${#workers[@]} -gt 0 ]]; then
-    read -p "Group all workers into one window? [Y/n]: " single_window
-    if [[ "$(lowercase "$single_window")" != "n" ]]; then
+    if prompt_confirm "Group all workers into one window?" "y"; then
       local window_name
-      read -p "Window name (default: workers): " window_name
-      window_name="${window_name:-workers}"
+      window_name=$(prompt_input "Window name" "workers")
       windows+=("$window_name|${worker_ids[*]}")
     else
-      echo "Enter window groupings (comma-separated worker IDs):"
+      log_info "Configure window groupings (select workers for each window)"
       while true; do
-        local win_name win_workers
-        read -p "Window name (or 'done'): " win_name
-        [[ "$win_name" == "done" || -z "$win_name" ]] && break
-        read -p "  Workers (comma-separated): " win_workers
-        windows+=("$win_name|$win_workers")
+        local win_name
+        win_name=$(prompt_input "Window name" "" "enter name or leave empty to finish")
+        [[ -z "$win_name" || "$win_name" == "enter name or leave empty to finish" ]] && break
+
+        # Let user select workers for this window
+        local -a win_worker_selection=()
+        readarray -t win_worker_selection < <(prompt_multi "Select workers for '$win_name':" "${worker_ids[@]}")
+
+        if [[ ${#win_worker_selection[@]} -gt 0 ]]; then
+          local win_workers_str="${win_worker_selection[*]}"
+          windows+=("$win_name|$win_workers_str")
+        fi
       done
     fi
   fi
@@ -897,21 +1051,56 @@ windows:
 EOF
   fi
 
+  # Create any pending worktrees now that config is complete
+  if [[ ${#pending_worktrees[@]} -gt 0 ]]; then
+    echo ""
+    log_info "Creating git worktrees..."
+    local letters=(a b c d e f g h i j)
+
+    for wt_request in "${pending_worktrees[@]}"; do
+      IFS='|' read -r source_dir num_wt <<< "$wt_request"
+
+      for ((i=0; i<num_wt; i++)); do
+        local letter="${letters[$i]}"
+        local wt_name="${source_dir}-${letter}"
+        local wt_path="$PWD/$wt_name"
+
+        if [[ ! -d "$wt_path" ]]; then
+          # Create worktree with a new branch
+          local branch_name="worker-${letter}"
+          if (cd "$source_dir" && git worktree add "$wt_path" -b "$branch_name" 2>/dev/null) || \
+             (cd "$source_dir" && git worktree add "$wt_path" HEAD 2>/dev/null); then
+            echo "  Created worktree: $wt_name"
+          else
+            log_warn "  Failed to create worktree: $wt_name"
+          fi
+        else
+          echo "  Worktree exists: $wt_name"
+        fi
+      done
+    done
+  fi
+
   log_ok "Created .hive.yaml"
   echo ""
 
   # Offer to generate role files
   if [[ ${#workers[@]} -gt 0 ]]; then
-    read -p "Generate CLAUDE_ROLE.md files for workers? [Y/n]: " gen_roles
-    if [[ "$(lowercase "$gen_roles")" != "n" ]]; then
+    if prompt_confirm "Generate CLAUDE_ROLE.md files for workers?" "y"; then
       cmd_role
     fi
   fi
 
   echo ""
-  echo "Next steps:"
-  echo "  1. Review .hive.yaml"
-  echo "  2. Run 'hive up' to start workers"
+  if has_gum; then
+    gum style --foreground 10 "Next steps:"
+    echo "  1. Review .hive.yaml"
+    echo "  2. Run 'hive up' to start workers"
+  else
+    echo "Next steps:"
+    echo "  1. Review .hive.yaml"
+    echo "  2. Run 'hive up' to start workers"
+  fi
 }
 
 cmd_role() {
