@@ -1025,7 +1025,9 @@ cmd_init() {
           done
           [[ $found -eq 0 ]] && new_remaining+=("$w")
         done
-        remaining_workers=("${new_remaining[@]}")
+        # Safe assignment for potentially empty array (bash set -u compatibility)
+        remaining_workers=()
+        [[ ${#new_remaining[@]} -gt 0 ]] && remaining_workers=("${new_remaining[@]}")
 
         [[ ${#remaining_workers[@]} -eq 0 ]] && break
         echo ""
