@@ -828,6 +828,9 @@ cmd_init() {
     echo "========================="
   fi
   echo ""
+  echo "This wizard will guide you through setting up hive."
+  echo "Nothing will be created until you confirm at the end."
+  echo ""
 
   # Check if config already exists
   if [[ -f ".hive.yaml" ]]; then
@@ -975,30 +978,106 @@ cmd_init() {
   local -a windows=()
 
   if [[ ${#workers[@]} -gt 0 ]]; then
+    echo "Workers run in tmux windows. Each window can have multiple panes"
+    echo "(split views), with one worker per pane. A 'watch' window is"
+    echo "automatically added to monitor and nudge idle workers."
+    echo ""
+
     if prompt_confirm "Group all workers into one window?" "y"; then
       local window_name
       window_name=$(prompt_input "Window name" "workers")
       windows+=("$window_name|${worker_ids[*]}")
     else
-      log_info "Configure window groupings (select workers for each window)"
-      while true; do
-        local win_name
-        win_name=$(prompt_input "Window name" "" "enter name or leave empty to finish")
-        [[ -z "$win_name" || "$win_name" == "enter name or leave empty to finish" ]] && break
+      echo ""
+      echo "Create windows by selecting workers, then naming the group."
+      echo "Workers can only belong to one window."
+      echo ""
 
-        # Let user select workers for this window
+      # Track remaining workers
+      local -a remaining_workers=("${worker_ids[@]}")
+
+      while [[ ${#remaining_workers[@]} -gt 0 ]]; do
+        echo "Remaining workers: ${remaining_workers[*]}"
+        echo ""
+
+        # Let user select workers first
         local -a win_worker_selection=()
-        IFS=$'\n' read -r -d '' -a win_worker_selection < <(prompt_multi "Select workers for '$win_name':" "${worker_ids[@]}"; printf '\0') || true
+        IFS=$'\n' read -r -d '' -a win_worker_selection < <(prompt_multi "Select workers for this window:" "${remaining_workers[@]}"; printf '\0') || true
 
-        if [[ ${#win_worker_selection[@]} -gt 0 ]]; then
-          local win_workers_str="${win_worker_selection[*]}"
-          windows+=("$win_name|$win_workers_str")
-        fi
+        [[ ${#win_worker_selection[@]} -eq 0 ]] && break
+
+        # Then name the window based on selection
+        local default_win_name="${win_worker_selection[0]}"
+        [[ ${#win_worker_selection[@]} -gt 1 ]] && default_win_name="workers-$((${#windows[@]} + 1))"
+
+        local win_name
+        win_name=$(prompt_input "Name for this window" "$default_win_name")
+
+        local win_workers_str="${win_worker_selection[*]}"
+        windows+=("$win_name|$win_workers_str")
+
+        # Remove selected workers from remaining
+        local -a new_remaining=()
+        for w in "${remaining_workers[@]}"; do
+          local found=0
+          for sel in "${win_worker_selection[@]}"; do
+            [[ "$w" == "$sel" ]] && found=1 && break
+          done
+          [[ $found -eq 0 ]] && new_remaining+=("$w")
+        done
+        remaining_workers=("${new_remaining[@]}")
+
+        [[ ${#remaining_workers[@]} -eq 0 ]] && break
+        echo ""
+        prompt_confirm "Create another window?" || break
       done
+
+      # Add any remaining workers to a default window
+      if [[ ${#remaining_workers[@]} -gt 0 ]]; then
+        log_warn "Adding remaining workers to 'other' window: ${remaining_workers[*]}"
+        windows+=("other|${remaining_workers[*]}")
+      fi
     fi
   fi
 
-  # Step 6: Generate config
+  # Step 6: Summary and confirmation
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "Summary"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+  echo "Backend:      $backend"
+  echo "Session:      $session"
+  echo "Task source:  $task_source"
+  echo ""
+  echo "Workers:      ${#worker_ids[@]}"
+  for wid in "${worker_ids[@]}"; do
+    echo "  - $wid"
+  done
+  echo ""
+  echo "Windows:      ${#windows[@]} (+ watch window)"
+  for win_spec in "${windows[@]}"; do
+    IFS='|' read -r wn ww <<< "$win_spec"
+    echo "  - $wn: $ww"
+  done
+  if [[ ${#pending_worktrees[@]} -gt 0 ]]; then
+    echo ""
+    echo "Worktrees to create:"
+    for wt_request in "${pending_worktrees[@]}"; do
+      IFS='|' read -r src purposes_str <<< "$wt_request"
+      echo "  - From $src/: ${purposes_str//,/, }"
+    done
+  fi
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+
+  if ! prompt_confirm "Create configuration and worktrees?" "y"; then
+    log_warn "Cancelled. Nothing was created."
+    exit 0
+  fi
+
+  # Step 7: Generate config
   echo ""
   log_info "Generating .hive.yaml..."
 
