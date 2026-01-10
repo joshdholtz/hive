@@ -119,7 +119,7 @@ prompt_choose() {
 }
 
 # Multi-select from options (returns newline-separated selections)
-# Usage: readarray -t selected < <(prompt_multi "Header" "${options[@]}")
+# Usage: IFS=$'\n' read -r -d '' -a selected < <(prompt_multi "Header" "${opts[@]}"; printf '\0')
 prompt_multi() {
   local header="$1"
   shift
@@ -845,7 +845,6 @@ cmd_init() {
 
   local -a available_dirs=()
   local -a display_names=()
-  declare -A dir_is_git=()
 
   for d in */; do
     [[ ! -d "$d" ]] && continue
@@ -857,10 +856,8 @@ cmd_init() {
     available_dirs+=("$name")
     if [[ -d "$d/.git" ]]; then
       display_names+=("$name [git]")
-      dir_is_git["$name"]=1
     else
       display_names+=("$name")
-      dir_is_git["$name"]=0
     fi
   done
 
@@ -874,19 +871,19 @@ cmd_init() {
     # Multi-select directories
     echo ""
     local -a selected_display=()
-    readarray -t selected_display < <(prompt_multi "Select directories to include as workers:" "${display_names[@]}")
-
-    # Extract actual directory names (strip " [git]" suffix)
-    local -a selected_dirs=()
-    for sel in "${selected_display[@]}"; do
-      [[ -z "$sel" ]] && continue
-      local dir_name="${sel% \[git\]}"
-      selected_dirs+=("$dir_name")
-    done
+    IFS=$'\n' read -r -d '' -a selected_display < <(prompt_multi "Select directories to include as workers:" "${display_names[@]}"; printf '\0') || true
 
     # Configure each selected directory
-    for name in "${selected_dirs[@]}"; do
-      local is_git="${dir_is_git[$name]:-0}"
+    for sel in "${selected_display[@]}"; do
+      [[ -z "$sel" ]] && continue
+
+      # Check if this is a git repo (display name ends with " [git]")
+      local is_git=0
+      local name="$sel"
+      if [[ "$sel" == *" [git]" ]]; then
+        is_git=1
+        name="${sel% \[git\]}"
+      fi
 
       echo ""
       if has_gum; then
@@ -965,7 +962,7 @@ cmd_init() {
 
         # Let user select workers for this window
         local -a win_worker_selection=()
-        readarray -t win_worker_selection < <(prompt_multi "Select workers for '$win_name':" "${worker_ids[@]}")
+        IFS=$'\n' read -r -d '' -a win_worker_selection < <(prompt_multi "Select workers for '$win_name':" "${worker_ids[@]}"; printf '\0') || true
 
         if [[ ${#win_worker_selection[@]} -gt 0 ]]; then
           local win_workers_str="${win_worker_selection[*]}"
