@@ -921,26 +921,33 @@ cmd_init() {
           local num_workers
           num_workers=$(prompt_input "How many workers?" "3")
 
-          log_info "Configuring $num_workers worktrees (will be created at end)..."
-          local letters=(a b c d e f g h i j)
+          echo ""
+          echo "Each worker needs a purpose (e.g., 'api', 'auth', 'frontend')."
+          echo "This creates:"
+          echo "  - Worktree folder: ${name}-<purpose>"
+          echo "  - Branch pattern:  ${name}-<purpose>/<purpose>/<feature>"
+          echo ""
 
-          # Store worktree request for later creation
-          pending_worktrees+=("$name|$num_workers")
-
+          # Collect purposes first, then create worktree requests
+          local -a purposes=()
           for ((i=0; i<num_workers; i++)); do
-            local letter="${letters[$i]}"
-            local wt_name="${name}-${letter}"
-
-            echo ""
-            echo "Worker: $wt_name"
-            echo "  Purpose is used to assign tasks and name branches."
-            echo "  Example: 'api' creates branches like ${name}-${letter}/api/add-endpoint"
             local purpose
-            purpose=$(prompt_input "Purpose/lane for $wt_name" "$name")
+            purpose=$(prompt_input "Purpose for worker $((i+1))" "")
+            [[ -z "$purpose" ]] && continue
+            purposes+=("$purpose")
+          done
+
+          # Store worktree request for later creation (source_dir|purpose1,purpose2,...)
+          local purposes_str
+          purposes_str=$(IFS=,; echo "${purposes[*]}")
+          pending_worktrees+=("$name|$purposes_str")
+
+          for purpose in "${purposes[@]}"; do
+            local wt_name="${name}-${purpose}"
 
             # Auto-generate branch prefixes from purpose
-            local branch_local="${name}-${letter}/${purpose}"
-            local branch_remote="${letter}/${purpose}"
+            local branch_local="${wt_name}/${purpose}"
+            local branch_remote="${purpose}"
 
             workers+=("$wt_name|$purpose|$branch_local|$branch_remote")
             worker_ids+=("$wt_name")
@@ -1071,19 +1078,18 @@ EOF
   if [[ ${#pending_worktrees[@]} -gt 0 ]]; then
     echo ""
     log_info "Creating git worktrees..."
-    local letters=(a b c d e f g h i j)
 
     for wt_request in "${pending_worktrees[@]}"; do
-      IFS='|' read -r source_dir num_wt <<< "$wt_request"
+      IFS='|' read -r source_dir purposes_str <<< "$wt_request"
+      IFS=',' read -ra purposes <<< "$purposes_str"
 
-      for ((i=0; i<num_wt; i++)); do
-        local letter="${letters[$i]}"
-        local wt_name="${source_dir}-${letter}"
+      for purpose in "${purposes[@]}"; do
+        local wt_name="${source_dir}-${purpose}"
         local wt_path="$PWD/$wt_name"
 
         if [[ ! -d "$wt_path" ]]; then
           # Create worktree with a new branch
-          local branch_name="worker-${letter}"
+          local branch_name="worker-${purpose}"
           if (cd "$source_dir" && git worktree add "$wt_path" -b "$branch_name" 2>/dev/null) || \
              (cd "$source_dir" && git worktree add "$wt_path" HEAD 2>/dev/null); then
             echo "  Created worktree: $wt_name"
