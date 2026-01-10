@@ -200,6 +200,30 @@ get_project_dir() {
   dirname "$config"
 }
 
+# Get architect backend from config (supports old and new format)
+get_architect_backend() {
+  local config="$1"
+  local arch_backend
+  arch_backend=$(yq -r '.architect.backend // ""' "$config")
+  if [[ -z "$arch_backend" || "$arch_backend" == "null" ]]; then
+    # Fall back to old single backend format
+    arch_backend=$(yq -r '.backend // "claude"' "$config")
+  fi
+  echo "$arch_backend"
+}
+
+# Get workers backend from config (supports old and new format)
+get_workers_backend() {
+  local config="$1"
+  local workers_backend
+  workers_backend=$(yq -r '.workers.backend // ""' "$config")
+  if [[ -z "$workers_backend" || "$workers_backend" == "null" ]]; then
+    # Fall back to old single backend format
+    workers_backend=$(yq -r '.backend // "claude"' "$config")
+  fi
+  echo "$workers_backend"
+}
+
 # Check dependencies
 check_dependencies() {
   local config="${1:-}"
@@ -210,11 +234,15 @@ check_dependencies() {
   command -v tmuxp &>/dev/null || missing+=("tmuxp (pip install tmuxp)")
 
   if [[ -n "$config" && -f "$config" ]]; then
-    local backend task_source
-    backend=$(yq -r '.backend // "claude"' "$config")
+    local arch_backend workers_backend task_source
+    arch_backend=$(get_architect_backend "$config")
+    workers_backend=$(get_workers_backend "$config")
     task_source=$(yq -r '.tasks.source // "yaml"' "$config")
 
-    command -v "$backend" &>/dev/null || missing+=("$backend CLI")
+    command -v "$arch_backend" &>/dev/null || missing+=("$arch_backend CLI (for architect)")
+    if [[ "$workers_backend" != "$arch_backend" ]]; then
+      command -v "$workers_backend" &>/dev/null || missing+=("$workers_backend CLI (for workers)")
+    fi
 
     if [[ "$task_source" == "github" ]]; then
       command -v gh &>/dev/null || missing+=("gh (brew install gh)")
@@ -241,17 +269,21 @@ validate_config() {
     return 1
   fi
 
-  local backend session
-  backend=$(yq -r '.backend // ""' "$config")
+  # Get backends (supports both old and new format)
+  local arch_backend workers_backend session
+  arch_backend=$(get_architect_backend "$config")
+  workers_backend=$(get_workers_backend "$config")
   session=$(yq -r '.session // ""' "$config")
 
-  if [[ -z "$backend" ]]; then
-    log_error "'backend' is required in .hive.yaml (codex or claude)"
+  # Validate architect backend
+  if [[ "$arch_backend" != "codex" && "$arch_backend" != "claude" ]]; then
+    log_error "architect backend must be 'codex' or 'claude', got: $arch_backend"
     return 1
   fi
 
-  if [[ "$backend" != "codex" && "$backend" != "claude" ]]; then
-    log_error "backend must be 'codex' or 'claude', got: $backend"
+  # Validate workers backend
+  if [[ "$workers_backend" != "codex" && "$workers_backend" != "claude" ]]; then
+    log_error "workers backend must be 'codex' or 'claude', got: $workers_backend"
     return 1
   fi
 
@@ -423,8 +455,9 @@ generate_tmuxp_config() {
   local project_dir
   project_dir=$(get_project_dir "$config")
 
-  local backend session
-  backend=$(yq -r '.backend' "$config")
+  local arch_backend workers_backend session
+  arch_backend=$(get_architect_backend "$config")
+  workers_backend=$(get_workers_backend "$config")
   session=$(yq -r '.session' "$config")
 
   local tmuxp_file
@@ -439,7 +472,25 @@ options:
 windows:
 EOF
 
-  # Iterate windows
+  # Architect window (always first)
+  local arch_msg="Read ARCHITECT_ROLE.md. You are the architect - plan tasks but do NOT edit code. Add tasks to the tasks file for workers to pick up."
+  local arch_cmd
+  if [[ "$arch_backend" == "codex" ]]; then
+    arch_cmd="env -u CODEX_SANDBOX -u CODEX_SANDBOX_NETWORK_DISABLED codex --sandbox danger-full-access --ask-for-approval \"never\" \"$arch_msg\""
+  else
+    arch_cmd="claude \"$arch_msg\""
+  fi
+
+  cat >> "$tmuxp_file" <<EOF
+  - window_name: architect
+    panes:
+      - shell_command:
+          - tmux select-pane -T "architect"
+          - cd "$project_dir"
+          - $arch_cmd
+EOF
+
+  # Worker windows
   local num_windows
   num_windows=$(yq -r '.windows | length' "$config")
 
@@ -471,7 +522,7 @@ EOF
       local agent_cmd initial_msg
       initial_msg="Read CLAUDE_ROLE.md if it exists. You are assigned to lane '$worker_lane'. Check your task backlog, claim ONE task, and work on it. Push a PR when done."
 
-      if [[ "$backend" == "codex" ]]; then
+      if [[ "$workers_backend" == "codex" ]]; then
         agent_cmd="env -u CODEX_SANDBOX -u CODEX_SANDBOX_NETWORK_DISABLED codex --sandbox danger-full-access --ask-for-approval \"never\" \"$initial_msg\""
       else
         agent_cmd="claude \"$initial_msg\""
@@ -512,6 +563,7 @@ USAGE:
 
 COMMANDS:
     init              Create .hive.yaml interactively
+    deinit            Remove hive config and generated files
     up                Start worker session
     stop              Stop worker session
     nudge [worker]    Nudge idle workers (or specific one)
@@ -1205,6 +1257,118 @@ EOF
   fi
 }
 
+cmd_deinit() {
+  local config
+  config=$(find_config) || { log_error "No .hive.yaml found. Nothing to remove."; exit 1; }
+
+  local project_dir session
+  project_dir=$(get_project_dir "$config")
+  session=$(yq -r '.session // ""' "$config")
+
+  echo ""
+  log_warn "This will remove hive configuration and generated files."
+  echo ""
+
+  # Stop session if running
+  if [[ -n "$session" ]] && tmux has-session -t "$session" 2>/dev/null; then
+    log_warn "Session '$session' is running"
+    if prompt_confirm "Stop the running session?"; then
+      tmux kill-session -t "$session"
+      log_ok "Session stopped"
+    fi
+  fi
+
+  # Collect what we'll remove
+  local -a files_to_remove=()
+  local -a worktrees_to_remove=()
+
+  # Check for ARCHITECT_ROLE.md
+  if [[ -f "$project_dir/ARCHITECT_ROLE.md" ]]; then
+    files_to_remove+=("$project_dir/ARCHITECT_ROLE.md")
+  fi
+
+  # Check for tasks.yaml
+  local tasks_file
+  tasks_file=$(yq -r '.tasks.file // "./tasks.yaml"' "$config")
+  tasks_file="$project_dir/$tasks_file"
+  if [[ -f "$tasks_file" ]]; then
+    files_to_remove+=("$tasks_file")
+  fi
+
+  # Find CLAUDE_ROLE.md files and detect worktrees
+  while IFS='|' read -r id window pane lane dir branch_local branch_remote; do
+    [[ -z "$id" ]] && continue
+
+    local abs_dir="$project_dir/$dir"
+
+    # Check for CLAUDE_ROLE.md
+    if [[ -f "$abs_dir/CLAUDE_ROLE.md" ]]; then
+      files_to_remove+=("$abs_dir/CLAUDE_ROLE.md")
+    fi
+
+    # Check if this is a git worktree (has .git file, not directory)
+    if [[ -f "$abs_dir/.git" ]]; then
+      worktrees_to_remove+=("$abs_dir")
+    fi
+  done < <(build_worker_list "$config")
+
+  # Show what will be removed
+  echo "Files to remove:"
+  echo "  - $config"
+  for f in "${files_to_remove[@]}"; do
+    echo "  - $f"
+  done
+  echo ""
+
+  if [[ ${#worktrees_to_remove[@]} -gt 0 ]]; then
+    echo "Detected git worktrees:"
+    for wt in "${worktrees_to_remove[@]}"; do
+      echo "  - $wt"
+    done
+    echo ""
+  fi
+
+  if ! prompt_confirm "Remove these files?"; then
+    log_warn "Cancelled"
+    exit 0
+  fi
+
+  # Remove files
+  for f in "${files_to_remove[@]}"; do
+    rm -f "$f" && echo "  Removed: $f"
+  done
+
+  # Handle worktrees
+  if [[ ${#worktrees_to_remove[@]} -gt 0 ]]; then
+    echo ""
+    if prompt_confirm "Also remove git worktrees? (This will delete the directories)"; then
+      for wt in "${worktrees_to_remove[@]}"; do
+        # Find the main repo for this worktree
+        local git_dir
+        git_dir=$(cat "$wt/.git" 2>/dev/null | sed 's/gitdir: //')
+        if [[ -n "$git_dir" ]]; then
+          # Extract main repo path (worktree gitdir is usually .git/worktrees/<name>)
+          local main_repo
+          main_repo=$(dirname "$(dirname "$(dirname "$git_dir")")")
+          if [[ -d "$main_repo/.git" ]]; then
+            (cd "$main_repo" && git worktree remove "$wt" --force 2>/dev/null) && echo "  Removed worktree: $wt" || log_warn "  Failed to remove worktree: $wt"
+          else
+            rm -rf "$wt" && echo "  Removed directory: $wt"
+          fi
+        else
+          rm -rf "$wt" && echo "  Removed directory: $wt"
+        fi
+      done
+    fi
+  fi
+
+  # Remove config last
+  rm -f "$config" && echo "  Removed: $config"
+
+  echo ""
+  log_ok "Hive configuration removed"
+}
+
 cmd_role() {
   local specific_worker="${1:-}"
 
@@ -1299,7 +1463,109 @@ EOF
 
   done < <(build_worker_list "$config")
 
+  # Generate ARCHITECT_ROLE.md
+  generate_architect_role "$config"
+
   log_ok "Role files generated"
+}
+
+# Generate ARCHITECT_ROLE.md
+generate_architect_role() {
+  local config="$1"
+  local project_dir task_source tasks_file
+  project_dir=$(get_project_dir "$config")
+  task_source=$(yq -r '.tasks.source // "yaml"' "$config")
+  tasks_file=$(yq -r '.tasks.file // "./tasks.yaml"' "$config")
+
+  local role_file="$project_dir/ARCHITECT_ROLE.md"
+
+  # Collect worker lanes for reference
+  local lanes=""
+  while IFS='|' read -r id window pane lane dir branch_local branch_remote; do
+    [[ -z "$id" ]] && continue
+    lanes="$lanes\n- **$id** → lane: \`$lane\`"
+  done < <(build_worker_list "$config")
+
+  log_info "Generating $role_file"
+
+  cat > "$role_file" <<EOF
+# Architect Role
+
+You are the **architect** - you plan work but do NOT write code.
+
+## Core Principles
+
+1. **Planning only** - You do NOT edit code or make commits
+2. **Research first** - Explore the codebase before proposing tasks
+3. **Get confirmation** - List task titles and wait for user approval before adding
+4. **One task at a time per worker** - Don't overload the backlog
+
+## Your Responsibilities
+
+- Convert user intent into well-scoped tasks with clear acceptance criteria
+- Place tasks in the correct lane for the appropriate worker
+- Ask clarifying questions instead of guessing
+- Monitor worker progress and unblock them when needed
+
+## Available Workers
+$(echo -e "$lanes")
+
+## Task Structure
+
+Each task should include:
+- **id**: Unique identifier (kebab-case)
+- **description**: What needs to be implemented
+- **acceptance**: List of criteria for completion
+
+EOF
+
+  if [[ "$task_source" == "github" ]]; then
+    local github_project
+    github_project=$(yq -r '.tasks.github_project // ""' "$config")
+    cat >> "$role_file" <<EOF
+## Task Management
+
+Tasks are managed in **GitHub Project #$github_project**.
+
+Use the GitHub Project board to:
+- Add new tasks to the appropriate lane's backlog
+- Monitor task status (Backlog → In Progress → Done)
+- Review completed work
+
+EOF
+  else
+    cat >> "$role_file" <<EOF
+## Task Management
+
+Tasks are managed in \`$tasks_file\`.
+
+### Adding a Task
+
+\`\`\`yaml
+<lane-name>:
+  backlog:
+    - id: my-task-id
+      description: What needs to be done
+      acceptance:
+        - First acceptance criterion
+        - Second acceptance criterion
+\`\`\`
+
+### Task Lifecycle
+
+1. **backlog** - Tasks waiting to be claimed
+2. **in_progress** - Worker is actively working (max 1 per worker)
+3. **done** - Completed with summary
+
+EOF
+  fi
+
+  cat >> "$role_file" <<EOF
+---
+## Project-Specific Instructions
+<!-- Add your custom instructions below this line -->
+
+EOF
 }
 
 #------------------------------------------------------------------------------
@@ -1312,6 +1578,7 @@ main() {
 
   case "$cmd" in
     init) cmd_init "$@" ;;
+    deinit) cmd_deinit "$@" ;;
     up) cmd_up "$@" ;;
     stop) cmd_stop "$@" ;;
     nudge) cmd_nudge "$@" ;;
