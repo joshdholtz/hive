@@ -31,6 +31,9 @@ log_ok() { echo -e "${GREEN}[ok]${NC} $*"; }
 log_warn() { echo -e "${YELLOW}[warn]${NC} $*"; }
 log_error() { echo -e "${RED}[error]${NC} $*" >&2; }
 
+# Portable lowercase (works in bash 3, zsh, etc.)
+lowercase() { echo "$1" | tr '[:upper:]' '[:lower:]'; }
+
 # Find .hive.yaml starting from current directory, walking up to root
 find_config() {
   local dir="$PWD"
@@ -397,7 +400,7 @@ cmd_up() {
   if tmux has-session -t "$session" 2>/dev/null; then
     log_warn "Session '$session' already running"
     read -p "Kill and restart? [y/N]: " restart
-    if [[ "${restart,,}" == "y" ]]; then
+    if [[ "$(lowercase "$restart")" == "y" ]]; then
       tmux kill-session -t "$session"
     else
       echo "Use 'hive stop' first, or attach with: tmux attach -t $session"
@@ -680,7 +683,7 @@ cmd_init() {
   if [[ -f ".hive.yaml" ]]; then
     log_warn ".hive.yaml already exists"
     read -p "Overwrite? [y/N]: " overwrite
-    [[ "${overwrite,,}" != "y" ]] && exit 0
+    [[ "$(lowercase "$overwrite")" != "y" ]] && exit 0
   fi
 
   # Step 1: Backend
@@ -732,7 +735,7 @@ cmd_init() {
     [[ "$name" == "node_modules" || "$name" == ".git" || "$name" == "vendor" || "$name" == "dist" || "$name" == "build" ]] && continue
 
     read -p "Include '$name' as worker? [y/N]: " include
-    if [[ "${include,,}" == "y" ]]; then
+    if [[ "$(lowercase "$include")" == "y" ]]; then
       local lane branch_local branch_remote
       read -p "  Lane name (default: $name): " lane
       lane="${lane:-$name}"
@@ -755,7 +758,7 @@ cmd_init() {
 
   if [[ ${#workers[@]} -gt 0 ]]; then
     read -p "Group all workers into one window? [Y/n]: " single_window
-    if [[ "${single_window,,}" != "n" ]]; then
+    if [[ "$(lowercase "$single_window")" != "n" ]]; then
       local window_name
       read -p "Window name (default: workers): " window_name
       window_name="${window_name:-workers}"
@@ -854,7 +857,7 @@ EOF
   # Offer to generate role files
   if [[ ${#workers[@]} -gt 0 ]]; then
     read -p "Generate CLAUDE_ROLE.md files for workers? [Y/n]: " gen_roles
-    if [[ "${gen_roles,,}" != "n" ]]; then
+    if [[ "$(lowercase "$gen_roles")" != "n" ]]; then
       cmd_role
     fi
   fi
