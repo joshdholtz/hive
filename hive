@@ -543,6 +543,18 @@ EOF
 
       local abs_dir="$project_dir/$worker_dir"
 
+      # Compute relative path from worker dir back to project root's .hive/
+      local hive_path=".hive"
+      if [[ "$worker_dir" != "." ]]; then
+        # Count path segments and prepend ../
+        local depth
+        depth=$(echo "$worker_dir" | tr -cd '/' | wc -c)
+        depth=$((depth + 1))
+        hive_path=""
+        for ((i=0; i<depth; i++)); do hive_path="../$hive_path"; done
+        hive_path="${hive_path}.hive"
+      fi
+
       # Get startup message
       local initial_msg
       initial_msg=$(yq -r '.messages.startup // ""' "$config")
@@ -550,6 +562,7 @@ EOF
         initial_msg="$DEFAULT_STARTUP_MSG"
       fi
       initial_msg="${initial_msg//\{lane\}/$worker_lane}"
+      initial_msg="${initial_msg//.hive/$hive_path}"  # Fix path for worktrees
       initial_msg=$(echo "$initial_msg" | tr '\n' ' ' | sed 's/  */ /g')
 
       # Escape for double-quoted shell string
@@ -615,6 +628,17 @@ EOF
       local abs_dir="$project_dir/$worker_dir"
       abs_dir=$(cd "$abs_dir" 2>/dev/null && pwd || echo "$abs_dir")
 
+      # Compute relative path from worker dir back to project root's .hive/
+      local hive_path=".hive"
+      if [[ "$worker_dir" != "." ]]; then
+        local depth
+        depth=$(echo "$worker_dir" | tr -cd '/' | wc -c)
+        depth=$((depth + 1))
+        hive_path=""
+        for ((i=0; i<depth; i++)); do hive_path="../$hive_path"; done
+        hive_path="${hive_path}.hive"
+      fi
+
       # Build agent command - use config message or default
       local agent_cmd initial_msg
       initial_msg=$(yq -r '.messages.startup // ""' "$config")
@@ -623,6 +647,7 @@ EOF
       fi
       # Replace template variables and convert to single line
       initial_msg="${initial_msg//\{lane\}/$worker_lane}"
+      initial_msg="${initial_msg//.hive/$hive_path}"  # Fix path for worktrees
       initial_msg=$(echo "$initial_msg" | tr '\n' ' ' | sed 's/  */ /g')
 
       # Escape for double-quoted shell string (escape \, ", $, `)
