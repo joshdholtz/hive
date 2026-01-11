@@ -1,6 +1,10 @@
-# 🐝 Hive
+<p align="center">
+  <img src="banner.svg" alt="Hive - One architect plans, many workers execute" width="600">
+</p>
 
-**Run a swarm of AI agents: one architect plans, many workers execute.**
+<p align="center">
+  <strong>Run a swarm of AI agents in parallel on your codebase</strong>
+</p>
 
 Hive orchestrates multiple Claude or Codex instances working in parallel on your codebase. Instead of one AI doing tasks sequentially, run 3, 5, or 10 workers simultaneously—each focused on their own lane of work, coordinated by an architect agent.
 
