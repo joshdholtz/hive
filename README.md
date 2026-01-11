@@ -160,6 +160,17 @@ setup:
 
 Commands run in order from the project root. If any command fails, `hive up` stops.
 
+### Worker Instructions
+
+Add custom instructions sent to workers on startup and with each nudge:
+
+```yaml
+worker_instructions: |
+  Always run mix test before pushing.
+  Use conventional commit format.
+  Target the develop branch for PRs.
+```
+
 ### Task Sources
 
 **YAML (default)** — Simple file-based task queue:

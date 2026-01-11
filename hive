@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.1.5"
+VERSION="0.1.6"
 SCRIPT_NAME="hive"
 
 # Colors for output
@@ -520,6 +520,13 @@ EOF
       local agent_cmd initial_msg
       initial_msg="Read HIVE_WORKER.md if it exists. You are assigned to lane '$worker_lane'. Check your task backlog, claim ONE task, and work on it. CRITICAL: When finished, you MUST create a git branch, commit your changes, push to remote, and create a Pull Request using 'gh pr create'. Do NOT stop until the PR URL is displayed."
 
+      # Add custom worker instructions if configured
+      local custom_instructions
+      custom_instructions=$(yq -r '.worker_instructions // ""' "$config")
+      if [[ -n "$custom_instructions" && "$custom_instructions" != "null" ]]; then
+        initial_msg="$initial_msg ADDITIONAL INSTRUCTIONS: $custom_instructions"
+      fi
+
       if [[ "$workers_backend" == "codex" ]]; then
         agent_cmd="env -u CODEX_SANDBOX -u CODEX_SANDBOX_NETWORK_DISABLED codex --sandbox danger-full-access --ask-for-approval \"never\" \"$initial_msg\""
       else
@@ -708,6 +715,13 @@ cmd_nudge() {
       # Add branch naming convention if configured
       if [[ -n "$branch_local" && -n "$branch_remote" ]]; then
         msg="$msg IMPORTANT: Your LOCAL branch names MUST start with '$branch_local/' (e.g. '$branch_local/my-feature'). Push to remote with: git push origin $branch_local/my-feature:$branch_remote/my-feature"
+      fi
+
+      # Add custom worker instructions if configured
+      local custom_instructions
+      custom_instructions=$(yq -r '.worker_instructions // ""' "$config")
+      if [[ -n "$custom_instructions" && "$custom_instructions" != "null" ]]; then
+        msg="$msg ADDITIONAL INSTRUCTIONS: $custom_instructions"
       fi
 
       # Send to tmux pane
@@ -1524,6 +1538,17 @@ Tasks are managed in \`$worker_rel_tasks\` (relative to your working directory).
 - Check the \`backlog\` section for pending tasks
 - Move tasks to \`in_progress\` when you start
 - Move tasks to \`done\` when complete
+
+EOF
+    fi
+
+    # Add worker_instructions from config if present
+    local config_instructions
+    config_instructions=$(yq -r '.worker_instructions // ""' "$config")
+    if [[ -n "$config_instructions" && "$config_instructions" != "null" ]]; then
+      cat >> "$role_file" <<EOF
+## Additional Instructions (from .hive.yaml)
+$config_instructions
 
 EOF
     fi
