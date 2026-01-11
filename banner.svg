@@ -13,10 +13,10 @@
   <!-- Background -->
   <rect width="800" height="200" fill="url(#bg)"/>
 
-  <!-- Decorative hexagons on left - spaced apart -->
-  <polygon points="30,50 55,35 80,50 80,80 55,95 30,80" fill="none" stroke="#FFD700" stroke-width="1.5" opacity="0.25"/>
-  <polygon points="85,100 110,85 135,100 135,130 110,145 85,130" fill="none" stroke="#FFD700" stroke-width="1.5" opacity="0.35"/>
-  <polygon points="30,150 55,135 80,150 80,180 55,195 30,180" fill="none" stroke="#FFD700" stroke-width="1.5" opacity="0.2"/>
+  <!-- Decorative hexagons on left - tighter spacing, thicker stroke -->
+  <polygon points="40,55 62,42 84,55 84,81 62,94 40,81" fill="none" stroke="#FFD700" stroke-width="2.5" opacity="0.3"/>
+  <polygon points="84,81 106,68 128,81 128,107 106,120 84,107" fill="none" stroke="#FFD700" stroke-width="2.5" opacity="0.4"/>
+  <polygon points="40,107 62,94 84,107 84,133 62,146 40,133" fill="none" stroke="#FFD700" stroke-width="2.5" opacity="0.25"/>
 
   <!-- Main honeycomb icon -->
   <g transform="translate(200, 100)">
@@ -34,11 +34,11 @@
   <!-- Text -->
   <text x="280" y="115" font-family="system-ui, -apple-system, sans-serif" font-size="72" font-weight="bold" fill="#FFD700">hive</text>
 
-  <!-- Tagline - now bold -->
+  <!-- Tagline - bold -->
   <text x="280" y="152" font-family="system-ui, -apple-system, sans-serif" font-size="18" font-weight="bold" fill="#aaaaaa">One architect plans, many workers execute</text>
 
-  <!-- Decorative hexagons on right - spaced apart -->
-  <polygon points="720,50 745,35 770,50 770,80 745,95 720,80" fill="none" stroke="#FFD700" stroke-width="1.5" opacity="0.25"/>
-  <polygon points="665,100 690,85 715,100 715,130 690,145 665,130" fill="none" stroke="#FFD700" stroke-width="1.5" opacity="0.35"/>
-  <polygon points="720,150 745,135 770,150 770,180 745,195 720,180" fill="none" stroke="#FFD700" stroke-width="1.5" opacity="0.2"/>
+  <!-- Decorative hexagons on right - tighter spacing, thicker stroke -->
+  <polygon points="716,55 738,42 760,55 760,81 738,94 716,81" fill="none" stroke="#FFD700" stroke-width="2.5" opacity="0.3"/>
+  <polygon points="672,81 694,68 716,81 716,107 694,120 672,107" fill="none" stroke="#FFD700" stroke-width="2.5" opacity="0.4"/>
+  <polygon points="716,107 738,94 760,107 760,133 738,146 716,133" fill="none" stroke="#FFD700" stroke-width="2.5" opacity="0.25"/>
 </svg>
