@@ -1742,11 +1742,20 @@ cmd_doctor() {
     log_ok "Found: ARCHITECT_ROLE.md"
   fi
 
-  # Check 3: WORKER_ROLE.md for each worker
+  # Check 3: WORKER_ROLE.md for each worker (and clean up old CLAUDE_ROLE.md)
+  local -a old_role_files=()
   while IFS='|' read -r id window pane lane dir branch_local branch_remote; do
     [[ -z "$id" ]] && continue
     local worker_dir="$project_dir/$dir"
     local role_file="$worker_dir/WORKER_ROLE.md"
+    local old_role_file="$worker_dir/CLAUDE_ROLE.md"
+
+    # Check for old CLAUDE_ROLE.md files
+    if [[ -f "$old_role_file" ]]; then
+      log_warn "Found old: $dir/CLAUDE_ROLE.md (renamed to WORKER_ROLE.md)"
+      old_role_files+=("$old_role_file")
+      issues_found=$((issues_found + 1))
+    fi
 
     if [[ ! -f "$role_file" ]]; then
       log_warn "Missing: $dir/WORKER_ROLE.md"
@@ -1755,6 +1764,17 @@ cmd_doctor() {
       log_ok "Found: $dir/WORKER_ROLE.md"
     fi
   done < <(build_worker_list "$config")
+
+  # Remove old CLAUDE_ROLE.md files
+  if [[ ${#old_role_files[@]} -gt 0 ]]; then
+    echo ""
+    if prompt_confirm "Remove old CLAUDE_ROLE.md files?"; then
+      for old_file in "${old_role_files[@]}"; do
+        rm -f "$old_file" && echo "  Removed: $old_file"
+        issues_fixed=$((issues_fixed + 1))
+      done
+    fi
+  fi
 
   # Offer to regenerate all role files if any are missing
   if [[ $issues_found -gt $issues_fixed ]]; then
