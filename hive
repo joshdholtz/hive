@@ -469,7 +469,7 @@ get_task_counts() {
     # YAML task source
     local tasks_file project_dir
     project_dir=$(get_project_dir "$config")
-    tasks_file=$(yq -r '.tasks.file // "./.hive/tasks.yaml"' "$config")
+    tasks_file=$(yq -r '.tasks.file // ".hive/tasks.yaml"' "$config")
     tasks_file="$project_dir/$tasks_file"
 
     if [[ -f "$tasks_file" ]]; then
@@ -963,7 +963,7 @@ cmd_watch() {
   else
     local tasks_file project_dir
     project_dir=$(get_project_dir "$config")
-    tasks_file=$(yq -r '.tasks.file // "./.hive/tasks.yaml"' "$config")
+    tasks_file=$(yq -r '.tasks.file // ".hive/tasks.yaml"' "$config")
     tasks_file="$project_dir/$tasks_file"
 
     if command -v fswatch &>/dev/null; then
@@ -1090,7 +1090,7 @@ cmd_init() {
     github_status_field=$(prompt_input "Status field ID" "" "PVTSSF_...")
     github_lane_field=$(prompt_input "Lane field ID" "" "PVTSSF_...")
   else
-    tasks_file=$(prompt_input "Tasks file path" "./.hive/tasks.yaml")
+    tasks_file=$(prompt_input "Tasks file path" ".hive/tasks.yaml")
   fi
 
   # Step 4: Scan and select directories
@@ -1643,7 +1643,7 @@ Tasks are managed in GitHub Project #$github_project.
 EOF
     else
       local tasks_file
-      tasks_file=$(yq -r '.tasks.file // "./.hive/tasks.yaml"' "$config")
+      tasks_file=$(yq -r '.tasks.file // ".hive/tasks.yaml"' "$config")
 
       # Compute relative path from worker dir to tasks file
       # Count depth of worker dir and prepend ../
@@ -1710,7 +1710,7 @@ generate_architect_role() {
   local project_dir task_source tasks_file
   project_dir=$(get_project_dir "$config")
   task_source=$(yq -r '.tasks.source // "yaml"' "$config")
-  tasks_file=$(yq -r '.tasks.file // "./.hive/tasks.yaml"' "$config")
+  tasks_file=$(yq -r '.tasks.file // ".hive/tasks.yaml"' "$config")
 
   mkdir -p "$project_dir/.hive"
   local role_file="$project_dir/.hive/ARCHITECT.md"
@@ -1814,7 +1814,7 @@ bootstrap_tasks_file() {
   # Only for yaml task source
   [[ "$task_source" != "yaml" ]] && return 0
 
-  tasks_file=$(yq -r '.tasks.file // "./.hive/tasks.yaml"' "$config")
+  tasks_file=$(yq -r '.tasks.file // ".hive/tasks.yaml"' "$config")
   local full_path="$project_dir/$tasks_file"
 
   # Don't overwrite existing file
@@ -1835,6 +1835,7 @@ bootstrap_tasks_file() {
   done < <(build_worker_list "$config")
 
   # Generate tasks file
+  mkdir -p "$(dirname "$full_path")"
   cat > "$full_path" <<'EOF'
 # Hive Task Queue
 # The architect adds tasks here, workers claim and complete them
@@ -1895,7 +1896,7 @@ cmd_doctor() {
   task_source=$(yq -r '.tasks.source // "yaml"' "$config")
 
   if [[ "$task_source" == "yaml" ]]; then
-    tasks_file=$(yq -r '.tasks.file // "./.hive/tasks.yaml"' "$config")
+    tasks_file=$(yq -r '.tasks.file // ".hive/tasks.yaml"' "$config")
     local full_tasks_path="$project_dir/$tasks_file"
 
     if [[ ! -f "$full_tasks_path" ]]; then
