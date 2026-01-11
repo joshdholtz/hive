@@ -498,8 +498,7 @@ generate_tmuxp_config() {
   arch_backend=$(get_architect_backend "$config")
   workers_backend=$(get_workers_backend "$config")
   session=$(yq -r '.session' "$config")
-  local layout_mode
-  layout_mode=$(yq -r '.layout // "default"' "$config")
+  local layout_mode="${HIVE_LAYOUT:-default}"
 
   local tmuxp_file
   tmuxp_file=$(mktemp).yaml
@@ -524,13 +523,13 @@ EOF
   local arch_cmd_yaml
   arch_cmd_yaml=$(yaml_escape "$arch_cmd")
 
-  # Compact mode: architect + all workers in one window
-  if [[ "$layout_mode" == "compact" ]]; then
+  # Default mode: architect + all workers in one window (architect on left)
+  if [[ "$layout_mode" == "default" ]]; then
     cat >> "$tmuxp_file" <<EOF
   - window_name: hive
-    layout: main-horizontal
+    layout: main-vertical
     options:
-      main-pane-height: 60%
+      main-pane-width: 50%
     panes:
       - shell_command:
           - tmux select-pane -T "architect"
@@ -587,8 +586,8 @@ EOF
 EOF
   fi
 
-  # Worker windows (only in default mode)
-  if [[ "$layout_mode" != "compact" ]]; then
+  # Worker windows (only in custom mode)
+  if [[ "$layout_mode" == "custom" ]]; then
     local num_windows
     num_windows=$(yq -r '.windows | length' "$config")
 
@@ -732,6 +731,14 @@ cmd_up() {
 
   # Ensure hive files are gitignored
   ensure_git_exclude "$project_dir"
+
+  # Choose layout mode
+  echo ""
+  local layout_mode
+  layout_mode=$(prompt_choose "Layout:" "default (all in one window)" "custom (separate windows)")
+  [[ "$layout_mode" == *"default"* ]] && layout_mode="default"
+  [[ "$layout_mode" == *"custom"* ]] && layout_mode="custom"
+  export HIVE_LAYOUT="$layout_mode"
 
   local num_setup_cmds
   num_setup_cmds=$(yq -r '.setup | length // 0' "$config")
@@ -1194,28 +1201,22 @@ cmd_init() {
     log_warn "No workers added. Creating minimal config."
   fi
 
-  # Step 5: Group into windows
+  # Step 5: Group workers into windows (for custom layout)
   echo ""
   local -a windows=()
-  local layout_mode="default"
 
   if [[ ${#workers[@]} -gt 0 ]]; then
     echo "┌─────────────────────────────────────────────────────────┐"
-    echo "│  TMUX LAYOUT OPTIONS                                    │"
+    echo "│  WINDOW GROUPING (for custom layout)                    │"
     echo "├─────────────────────────────────────────────────────────┤"
-    echo "│  compact   - All in one window (architect top, workers  │"
-    echo "│              tiled below). Fun to watch!                │"
-    echo "│  default   - Separate windows for architect & workers   │"
-    echo "│              (with optional grouping)                   │"
+    echo "│  At 'hive up' you can choose:                           │"
+    echo "│    default - All in one window (architect top, workers  │"
+    echo "│              tiled below)                               │"
+    echo "│    custom  - Separate windows with your groupings       │"
     echo "└─────────────────────────────────────────────────────────┘"
     echo ""
 
-    layout_mode=$(prompt_choose "Layout mode:" "compact" "default")
-
-    if [[ "$layout_mode" == "compact" ]]; then
-      # All workers in one window, architect gets top pane
-      windows+=("hive|${worker_ids[*]}")
-    elif prompt_confirm "Group all workers into one window?" "y"; then
+    if prompt_confirm "Group all workers into one window (for custom layout)?" "y"; then
       local window_name
       window_name=$(prompt_input "Window name" "workers")
       windows+=("$window_name|${worker_ids[*]}")
@@ -1325,7 +1326,6 @@ workers:
   backend: $workers_backend
 
 session: $session
-layout: $layout_mode
 
 tasks:
   source: $task_source
