@@ -1349,6 +1349,22 @@ EOF
     bootstrap_tasks_file ".hive.yaml"
   fi
 
+  # Set up .git/info/exclude so hive files aren't tracked
+  local exclude_file=".git/info/exclude"
+  if [[ -d ".git" ]]; then
+    mkdir -p "$(dirname "$exclude_file")"
+    if ! grep -q "# Hive" "$exclude_file" 2>/dev/null; then
+      echo "" >> "$exclude_file"
+      echo "# Hive - AI worker orchestration" >> "$exclude_file"
+      echo "HIVE_ARCHITECT.md" >> "$exclude_file"
+      echo "**/HIVE_WORKER.md" >> "$exclude_file"
+      local tf_basename
+      tf_basename=$(basename "${tasks_file:-hive_tasks.yaml}")
+      echo "$tf_basename" >> "$exclude_file"
+      log_ok "Added hive files to .git/info/exclude"
+    fi
+  fi
+
   echo ""
 
   # Offer to generate role files
@@ -1882,18 +1898,24 @@ cmd_doctor() {
     fi
   fi
 
-  # Check 4: .gitignore entries
+  # Check 4: .git/info/exclude entries (local ignore, not committed)
   echo ""
-  log_info "Checking .gitignore..."
-  local gitignore_file="$project_dir/.gitignore"
+  log_info "Checking .git/info/exclude..."
+  local exclude_file="$project_dir/.git/info/exclude"
   local -a missing_ignores=()
 
+  # Get actual tasks file from config
+  local tasks_file
+  tasks_file=$(yq -r '.tasks.file // "./hive_tasks.yaml"' "$config")
+  tasks_file=$(basename "$tasks_file")
+
   # Check for hive files that should be ignored
-  local ignore_patterns=("HIVE_ARCHITECT.md" "HIVE_WORKER.md" "hive_tasks.yaml")
+  # Use **/ prefix to match in any subdirectory
+  local ignore_patterns=("HIVE_ARCHITECT.md" "**/HIVE_WORKER.md" "$tasks_file")
 
   for pattern in "${ignore_patterns[@]}"; do
-    if [[ -f "$gitignore_file" ]]; then
-      if ! grep -qxF "$pattern" "$gitignore_file" 2>/dev/null; then
+    if [[ -f "$exclude_file" ]]; then
+      if ! grep -qxF "$pattern" "$exclude_file" 2>/dev/null; then
         missing_ignores+=("$pattern")
       fi
     else
@@ -1902,31 +1924,30 @@ cmd_doctor() {
   done
 
   if [[ ${#missing_ignores[@]} -gt 0 ]]; then
-    log_warn "Missing .gitignore entries: ${missing_ignores[*]}"
+    log_warn "Missing .git/info/exclude entries: ${missing_ignores[*]}"
     issues_found=$((issues_found + 1))
 
-    if prompt_confirm "Add hive files to .gitignore?"; then
-      # Create .gitignore if it doesn't exist
-      if [[ ! -f "$gitignore_file" ]]; then
-        touch "$gitignore_file"
-      fi
+    if prompt_confirm "Add hive files to .git/info/exclude? (local only, not committed)"; then
+      # Create exclude file if it doesn't exist
+      mkdir -p "$(dirname "$exclude_file")"
+      touch "$exclude_file"
 
       # Add header comment if adding hive entries for the first time
-      if ! grep -q "# Hive" "$gitignore_file" 2>/dev/null; then
-        echo "" >> "$gitignore_file"
-        echo "# Hive - AI worker orchestration" >> "$gitignore_file"
+      if ! grep -q "# Hive" "$exclude_file" 2>/dev/null; then
+        echo "" >> "$exclude_file"
+        echo "# Hive - AI worker orchestration" >> "$exclude_file"
       fi
 
       for pattern in "${missing_ignores[@]}"; do
-        echo "$pattern" >> "$gitignore_file"
+        echo "$pattern" >> "$exclude_file"
         echo "  Added: $pattern"
       done
 
       issues_fixed=$((issues_fixed + 1))
-      log_ok "Updated .gitignore"
+      log_ok "Updated .git/info/exclude"
     fi
   else
-    log_ok ".gitignore has hive entries"
+    log_ok ".git/info/exclude has hive entries"
   fi
 
   # Check 5: messages section in config
