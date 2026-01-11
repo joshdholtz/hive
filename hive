@@ -890,9 +890,19 @@ cmd_init() {
     prompt_confirm "Overwrite existing config?" || exit 0
   fi
 
-  # Step 1: Backend
-  local backend
-  backend=$(prompt_choose "Select AI backend:" "claude" "codex")
+  # Step 1: Backends (architect and workers can differ)
+  echo "The architect plans work but does NOT edit code."
+  echo "Workers execute tasks and write code."
+  echo ""
+
+  local arch_backend
+  arch_backend=$(prompt_choose "Architect backend:" "claude (recommended for planning)" "codex")
+  # Strip the description suffix
+  [[ "$arch_backend" == *"claude"* ]] && arch_backend="claude"
+  [[ "$arch_backend" == *"codex"* ]] && arch_backend="codex"
+
+  local workers_backend
+  workers_backend=$(prompt_choose "Workers backend:" "claude" "codex")
 
   # Step 2: Session name
   local default_session
@@ -1099,11 +1109,12 @@ cmd_init() {
   echo "Summary"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo ""
-  echo "Backend:      $backend"
+  echo "Architect:    $arch_backend"
+  echo "Workers:      $workers_backend"
   echo "Session:      $session"
   echo "Task source:  $task_source"
   echo ""
-  echo "Workers:      ${#worker_ids[@]}"
+  echo "Worker count: ${#worker_ids[@]}"
   for wid in "${worker_ids[@]}"; do
     echo "  - $wid"
   done
@@ -1135,7 +1146,12 @@ cmd_init() {
   log_info "Generating .hive.yaml..."
 
   cat > .hive.yaml <<EOF
-backend: $backend
+architect:
+  backend: $arch_backend
+
+workers:
+  backend: $workers_backend
+
 session: $session
 
 tasks:
