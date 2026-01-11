@@ -611,6 +611,26 @@ cmd_up() {
     tmux set-environment -gu CODEX_SANDBOX_NETWORK_DISABLED 2>/dev/null || true
   fi
 
+  # Run setup commands if configured
+  local project_dir
+  project_dir=$(get_project_dir "$config")
+  local num_setup_cmds
+  num_setup_cmds=$(yq -r '.setup | length // 0' "$config")
+
+  if [[ "$num_setup_cmds" -gt 0 ]]; then
+    log_info "Running setup commands..."
+    for ((i=0; i<num_setup_cmds; i++)); do
+      local cmd
+      cmd=$(yq -r ".setup[$i]" "$config")
+      echo "  $ $cmd"
+      if ! (cd "$project_dir" && eval "$cmd"); then
+        log_error "Setup command failed: $cmd"
+        exit 1
+      fi
+    done
+    log_ok "Setup complete"
+  fi
+
   # Generate and load tmuxp config
   log_info "Generating tmux configuration..."
   local tmuxp_file

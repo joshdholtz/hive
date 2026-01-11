@@ -148,6 +148,18 @@ windows:
         lane: auth
 ```
 
+### Setup Commands
+
+Run commands before starting the session (e.g., install dependencies):
+
+```yaml
+setup:
+  - mise install
+  - npm install
+```
+
+Commands run in order from the project root. If any command fails, `hive up` stops.
+
 ### Task Sources
 
 **YAML (default)** — Simple file-based task queue:
