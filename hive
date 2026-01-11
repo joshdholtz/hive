@@ -498,6 +498,8 @@ generate_tmuxp_config() {
   arch_backend=$(get_architect_backend "$config")
   workers_backend=$(get_workers_backend "$config")
   session=$(yq -r '.session' "$config")
+  local layout_mode
+  layout_mode=$(yq -r '.layout // "default"' "$config")
 
   local tmuxp_file
   tmuxp_file=$(mktemp).yaml
@@ -511,7 +513,7 @@ options:
 windows:
 EOF
 
-  # Architect window (always first)
+  # Architect command
   local arch_msg="Read .hive/ARCHITECT.md. You are the architect - plan tasks but do NOT edit code. Add tasks to the tasks file for workers to pick up."
   local arch_cmd
   if [[ "$arch_backend" == "codex" ]]; then
@@ -519,13 +521,16 @@ EOF
   else
     arch_cmd="claude \"$arch_msg\""
   fi
-
-  # Escape for YAML double-quoted string
   local arch_cmd_yaml
   arch_cmd_yaml=$(yaml_escape "$arch_cmd")
 
-  cat >> "$tmuxp_file" <<EOF
-  - window_name: architect
+  # Compact mode: architect + all workers in one window
+  if [[ "$layout_mode" == "compact" ]]; then
+    cat >> "$tmuxp_file" <<EOF
+  - window_name: hive
+    layout: main-horizontal
+    options:
+      main-pane-height: 60%
     panes:
       - shell_command:
           - tmux select-pane -T "architect"
@@ -533,11 +538,61 @@ EOF
           - "$arch_cmd_yaml"
 EOF
 
-  # Worker windows
-  local num_windows
-  num_windows=$(yq -r '.windows | length' "$config")
+    # Add all workers as panes in the same window
+    while IFS='|' read -r worker_id window pane worker_lane worker_dir branch_local branch_remote; do
+      [[ -z "$worker_id" ]] && continue
 
-  for ((w=0; w<num_windows; w++)); do
+      local abs_dir="$project_dir/$worker_dir"
+
+      # Get startup message
+      local initial_msg
+      initial_msg=$(yq -r '.messages.startup // ""' "$config")
+      if [[ -z "$initial_msg" || "$initial_msg" == "null" ]]; then
+        initial_msg="$DEFAULT_STARTUP_MSG"
+      fi
+      initial_msg="${initial_msg//\{lane\}/$worker_lane}"
+      initial_msg=$(echo "$initial_msg" | tr '\n' ' ' | sed 's/  */ /g')
+
+      # Escape for double-quoted shell string
+      local escaped_msg="$initial_msg"
+      escaped_msg="${escaped_msg//\\/\\\\}"
+      escaped_msg="${escaped_msg//\"/\\\"}"
+      escaped_msg="${escaped_msg//\$/\\\$}"
+      escaped_msg="${escaped_msg//\`/\\\`}"
+
+      local agent_cmd
+      if [[ "$workers_backend" == "codex" ]]; then
+        agent_cmd="env -u CODEX_SANDBOX -u CODEX_SANDBOX_NETWORK_DISABLED codex --sandbox danger-full-access --ask-for-approval never \"$escaped_msg\""
+      else
+        agent_cmd="claude \"$escaped_msg\""
+      fi
+
+      local agent_cmd_yaml
+      agent_cmd_yaml=$(yaml_escape "$agent_cmd")
+      echo "      - shell_command:" >> "$tmuxp_file"
+      echo "          - tmux select-pane -T \"$worker_id\"" >> "$tmuxp_file"
+      echo "          - cd \"$abs_dir\"" >> "$tmuxp_file"
+      printf '          - "%s"\n' "$agent_cmd_yaml" >> "$tmuxp_file"
+    done < <(build_worker_list "$config")
+
+  else
+    # Default mode: separate windows
+    cat >> "$tmuxp_file" <<EOF
+  - window_name: architect
+    panes:
+      - shell_command:
+          - tmux select-pane -T "architect"
+          - cd "$project_dir"
+          - "$arch_cmd_yaml"
+EOF
+  fi
+
+  # Worker windows (only in default mode)
+  if [[ "$layout_mode" != "compact" ]]; then
+    local num_windows
+    num_windows=$(yq -r '.windows | length' "$config")
+
+    for ((w=0; w<num_windows; w++)); do
     local window_name layout
     window_name=$(yq -r ".windows[$w].name" "$config")
     layout=$(yq -r ".windows[$w].layout // \"even-horizontal\"" "$config")
@@ -592,7 +647,8 @@ EOF
       echo "          - cd \"$abs_dir\"" >> "$tmuxp_file"
       printf '          - "%s"\n' "$agent_cmd_yaml" >> "$tmuxp_file"
     done
-  done
+    done
+  fi
 
   # Add watch window
   cat >> "$tmuxp_file" <<EOF
@@ -1141,14 +1197,25 @@ cmd_init() {
   # Step 5: Group into windows
   echo ""
   local -a windows=()
+  local layout_mode="default"
 
   if [[ ${#workers[@]} -gt 0 ]]; then
-    echo "Workers run in tmux windows. Each window can have multiple panes"
-    echo "(split views), with one worker per pane. A 'watch' window is"
-    echo "automatically added to monitor and nudge idle workers."
+    echo "┌─────────────────────────────────────────────────────────┐"
+    echo "│  TMUX LAYOUT OPTIONS                                    │"
+    echo "├─────────────────────────────────────────────────────────┤"
+    echo "│  compact   - All in one window (architect top, workers  │"
+    echo "│              tiled below). Fun to watch!                │"
+    echo "│  default   - Separate windows for architect & workers   │"
+    echo "│              (with optional grouping)                   │"
+    echo "└─────────────────────────────────────────────────────────┘"
     echo ""
 
-    if prompt_confirm "Group all workers into one window?" "y"; then
+    layout_mode=$(prompt_choose "Layout mode:" "compact" "default")
+
+    if [[ "$layout_mode" == "compact" ]]; then
+      # All workers in one window, architect gets top pane
+      windows+=("hive|${worker_ids[*]}")
+    elif prompt_confirm "Group all workers into one window?" "y"; then
       local window_name
       window_name=$(prompt_input "Window name" "workers")
       windows+=("$window_name|${worker_ids[*]}")
@@ -1195,14 +1262,16 @@ cmd_init() {
 
         [[ ${#remaining_workers[@]} -eq 0 ]] && break
         echo ""
-        prompt_confirm "Create another window?" || break
+        if ! prompt_confirm "Customize another window? (No = group remaining into one window)"; then
+          # Group remaining workers into one window
+          if [[ ${#remaining_workers[@]} -gt 0 ]]; then
+            local rest_name
+            rest_name=$(prompt_input "Name for remaining workers window" "other")
+            windows+=("$rest_name|${remaining_workers[*]}")
+          fi
+          break
+        fi
       done
-
-      # Add any remaining workers to a default window
-      if [[ ${#remaining_workers[@]} -gt 0 ]]; then
-        log_warn "Adding remaining workers to 'other' window: ${remaining_workers[*]}"
-        windows+=("other|${remaining_workers[*]}")
-      fi
     fi
   fi
 
@@ -1256,6 +1325,7 @@ workers:
   backend: $workers_backend
 
 session: $session
+layout: $layout_mode
 
 tasks:
   source: $task_source
