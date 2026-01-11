@@ -1783,7 +1783,54 @@ cmd_doctor() {
     fi
   fi
 
-  # Check 4: Dependencies
+  # Check 4: .gitignore entries
+  echo ""
+  log_info "Checking .gitignore..."
+  local gitignore_file="$project_dir/.gitignore"
+  local -a missing_ignores=()
+
+  # Check for hive files that should be ignored
+  local ignore_patterns=("HIVE_ARCHITECT.md" "HIVE_WORKER.md" "hive_tasks.yaml")
+
+  for pattern in "${ignore_patterns[@]}"; do
+    if [[ -f "$gitignore_file" ]]; then
+      if ! grep -qxF "$pattern" "$gitignore_file" 2>/dev/null; then
+        missing_ignores+=("$pattern")
+      fi
+    else
+      missing_ignores+=("$pattern")
+    fi
+  done
+
+  if [[ ${#missing_ignores[@]} -gt 0 ]]; then
+    log_warn "Missing .gitignore entries: ${missing_ignores[*]}"
+    issues_found=$((issues_found + 1))
+
+    if prompt_confirm "Add hive files to .gitignore?"; then
+      # Create .gitignore if it doesn't exist
+      if [[ ! -f "$gitignore_file" ]]; then
+        touch "$gitignore_file"
+      fi
+
+      # Add header comment if adding hive entries for the first time
+      if ! grep -q "# Hive" "$gitignore_file" 2>/dev/null; then
+        echo "" >> "$gitignore_file"
+        echo "# Hive - AI worker orchestration" >> "$gitignore_file"
+      fi
+
+      for pattern in "${missing_ignores[@]}"; do
+        echo "$pattern" >> "$gitignore_file"
+        echo "  Added: $pattern"
+      done
+
+      issues_fixed=$((issues_fixed + 1))
+      log_ok "Updated .gitignore"
+    fi
+  else
+    log_ok ".gitignore has hive entries"
+  fi
+
+  # Check 5: Dependencies
   echo ""
   log_info "Checking dependencies..."
   if check_dependencies "$config"; then
