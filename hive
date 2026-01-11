@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.1.7"
+VERSION="0.1.8"
 SCRIPT_NAME="hive"
 
 # Colors for output
@@ -1907,7 +1907,49 @@ cmd_doctor() {
     log_ok ".gitignore has hive entries"
   fi
 
-  # Check 5: Dependencies
+  # Check 5: messages section in config
+  echo ""
+  log_info "Checking config for messages section..."
+  local has_messages
+  has_messages=$(yq -r '.messages // ""' "$config")
+  if [[ -z "$has_messages" || "$has_messages" == "null" ]]; then
+    log_warn "Missing: messages section in .hive.yaml"
+    issues_found=$((issues_found + 1))
+
+    if prompt_confirm "Add default messages section to .hive.yaml?"; then
+      cat >> "$config" <<'EOF'
+
+# Messages sent to workers (customize these for your workflow)
+# Available variables: {lane}, {backlog_count}
+messages:
+  startup: |
+    Read HIVE_WORKER.md if it exists. You are assigned to lane '{lane}'.
+    Check your task backlog, claim ONE task, and work on it.
+    CRITICAL: When finished, you MUST create a git branch, commit your changes,
+    push to remote, and create a Pull Request using 'gh pr create'.
+    Do NOT stop until the PR URL is displayed.
+  nudge: |
+    You have {backlog_count} task(s) in your backlog for lane '{lane}'.
+    If you have uncommitted changes from a previous task, create a PR NOW using
+    'gh pr create' before starting anything new.
+    Claim ONE task and work on it.
+    REMINDER: When done, create a branch, commit, push, and run 'gh pr create'.
+EOF
+      issues_fixed=$((issues_fixed + 1))
+      log_ok "Added messages section to .hive.yaml"
+    fi
+  else
+    log_ok "Config has messages section"
+  fi
+
+  # Check 6: Offer to regenerate role files with latest template
+  echo ""
+  if prompt_confirm "Regenerate role files with latest template?"; then
+    cmd_role
+    log_ok "Regenerated role files"
+  fi
+
+  # Check 7: Dependencies
   echo ""
   log_info "Checking dependencies..."
   if check_dependencies "$config"; then
