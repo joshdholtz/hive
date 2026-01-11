@@ -46,8 +46,8 @@
   <text x="280" y="115" font-family="system-ui, -apple-system, sans-serif" font-size="72" font-weight="bold" fill="#FFD700">hive</text>
 
   <!-- Tagline - two lines, thinner, bigger -->
-  <text x="280" y="145" font-family="system-ui, -apple-system, sans-serif" font-size="22" font-weight="normal" fill="#aaaaaa">One architect plans,</text>
-  <text x="280" y="172" font-family="system-ui, -apple-system, sans-serif" font-size="22" font-weight="normal" fill="#aaaaaa">many workers execute</text>
+  <text x="280" y="145" font-family="system-ui, -apple-system, sans-serif" font-size="22" font-weight="normal" fill="#aaaaaa">One architect plans</text>
+  <text x="280" y="172" font-family="system-ui, -apple-system, sans-serif" font-size="22" font-weight="normal" fill="#aaaaaa">Many workers execute</text>
 
   <!-- Decorative hexagons on right - true honeycomb, thick stroke -->
   <polygon points="695,70 715,58 735,70 735,94 715,106 695,94" fill="none" stroke="#FFD700" stroke-width="4" opacity="0.35"/>
