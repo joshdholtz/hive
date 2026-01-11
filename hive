@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.1.4"
+VERSION="0.1.5"
 SCRIPT_NAME="hive"
 
 # Colors for output
@@ -518,7 +518,7 @@ EOF
 
       # Build agent command
       local agent_cmd initial_msg
-      initial_msg="Read HIVE_WORKER.md if it exists. You are assigned to lane '$worker_lane'. Check your task backlog, claim ONE task, and work on it. Push a PR when done."
+      initial_msg="Read HIVE_WORKER.md if it exists. You are assigned to lane '$worker_lane'. Check your task backlog, claim ONE task, and work on it. CRITICAL: When finished, you MUST create a git branch, commit your changes, push to remote, and create a Pull Request using 'gh pr create'. Do NOT stop until the PR URL is displayed."
 
       if [[ "$workers_backend" == "codex" ]]; then
         agent_cmd="env -u CODEX_SANDBOX -u CODEX_SANDBOX_NETWORK_DISABLED codex --sandbox danger-full-access --ask-for-approval \"never\" \"$initial_msg\""
@@ -703,7 +703,7 @@ cmd_nudge() {
     # Only nudge if has backlog and not busy
     if [[ "$backlog_count" -gt 0 && "$in_progress_count" -eq 0 ]]; then
       # Build nudge message
-      local msg="FIRST: If you have uncommitted changes or an unpushed branch from a previous task, push it to a PR NOW before starting anything new. You have $backlog_count task(s) in your backlog for lane '$lane'. Claim ONE task and work on it."
+      local msg="FIRST: If you have uncommitted changes or an unpushed branch from a previous task, you MUST create a PR NOW using 'gh pr create' before starting anything new. You have $backlog_count task(s) in your backlog for lane '$lane'. Claim ONE task and work on it. REMINDER: When done, create a branch, commit, push, and run 'gh pr create' - do NOT stop until the PR URL is displayed."
 
       # Add branch naming convention if configured
       if [[ -n "$branch_local" && -n "$branch_remote" ]]; then
@@ -1459,9 +1459,18 @@ You are a background worker assigned to lane **$lane**.
 ## General Behavior
 1. Check your task backlog and claim ONE task at a time
 2. Implement the task completely
-3. Push your work to a PR before claiming the next task
-4. If you have uncommitted changes from a previous task, push them first
-5. Do NOT start a new task until the previous one has a PR created
+3. **CRITICAL: You MUST create a Pull Request before stopping or claiming another task**
+4. If you have uncommitted changes from a previous task, create a PR for them FIRST
+5. Do NOT stop working until you see a PR URL displayed
+
+## Creating a Pull Request (REQUIRED)
+After completing a task, you MUST follow these steps:
+1. Create a branch: \`git checkout -b <branch-name>\`
+2. Stage changes: \`git add -A\`
+3. Commit: \`git commit -m "description of changes"\`
+4. Push: \`git push -u origin <branch-name>\`
+5. Create PR: \`gh pr create --fill\` or \`gh pr create --title "..." --body "..."\`
+6. **Verify the PR URL is displayed before stopping**
 
 EOF
 
