@@ -1,95 +1,183 @@
-# Hive
+# 🐝 Hive
 
-A CLI tool for orchestrating multiple AI workers (Claude or Codex) through tmux sessions.
+**Run a swarm of AI agents: one architect plans, many workers execute.**
 
-## Installation
+Hive orchestrates multiple Claude or Codex instances working in parallel on your codebase. Instead of one AI doing tasks sequentially, run 3, 5, or 10 workers simultaneously—each focused on their own lane of work, coordinated by an architect agent.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/joshdholtz/hive/main/install.sh | bash
+```
+┌─────────────┐     ┌──────────────┐     ┌─────────────┐
+│  ARCHITECT  │────▶│  tasks.yaml  │◀────│   WATCHER   │
+│   (plans)   │     │              │     │  (nudges)   │
+└─────────────┘     └──────────────┘     └─────────────┘
+                           │
+              ┌────────────┼────────────┐
+              ▼            ▼            ▼
+        ┌──────────┐ ┌──────────┐ ┌──────────┐
+        │ worker-1 │ │ worker-2 │ │ worker-3 │
+        │   (api)  │ │  (auth)  │ │ (tests)  │
+        └──────────┘ └──────────┘ └──────────┘
 ```
 
-Or manually:
-```bash
-curl -fsSL https://raw.githubusercontent.com/joshdholtz/hive/main/hive -o ~/.local/bin/hive
-chmod +x ~/.local/bin/hive
-```
+---
 
-To uninstall:
-```bash
-rm ~/.local/bin/hive
-```
+## The Problem
+
+You have an AI coding assistant. It's great! But:
+
+- 🐌 **Sequential execution** — One task at a time
+- 📋 **Growing backlog** — 20 features, bugs, and improvements waiting
+- ⏰ **Time wasted** — Watching one agent work while you could run five
+- 🔀 **Context switching** — Hard for one agent to juggle multiple concerns
+
+What if you could just... run more agents in parallel?
+
+---
+
+## The Hive Approach
+
+Hive is opinionated about how AI agents should collaborate:
+
+### 🧠 One Architect
+- Plans and coordinates all work
+- Researches the codebase before proposing tasks
+- Writes clear, scoped tasks with acceptance criteria
+- **Does NOT write code** — planning only
+- Claude recommended for stronger reasoning
+
+### 🐝 Many Workers
+- Each worker has a "lane" (api, auth, frontend, etc.)
+- Claims ONE task at a time from their lane's backlog
+- Implements the task and pushes a PR
+- Never starts new work until previous PR is pushed
+
+### 👁 One Watcher
+- Monitors the task queue for changes
+- Nudges idle workers when new tasks appear
+- Keeps the hive productive
+
+### Why separate architect from workers?
+
+When an AI both plans AND executes, it often rushes into coding without proper research. The architect/worker split enforces a planning phase. The architect must understand the codebase and get your approval before adding tasks. Workers just execute.
+
+---
 
 ## Quick Start
 
 ```bash
-cd my-project
-hive init      # Create .hive.yaml interactively
-hive up        # Start workers
-tmux attach    # Attach to session
+# Install hive
+curl -fsSL https://raw.githubusercontent.com/joshdholtz/hive/main/install.sh | bash
+
+# Set up your project
+cd your-project
+hive init
+
+# Start the swarm
+hive up
+
+# Attach to watch
+tmux attach -t your-project
 ```
+
+The `hive init` wizard will guide you through:
+1. Choosing backends for architect and workers (Claude or Codex)
+2. Configuring your task source (YAML file or GitHub Projects)
+3. Setting up workers with optional git worktrees for parallel development
+
+---
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `hive init` | Interactive wizard to create .hive.yaml |
-| `hive up` | Start worker session |
-| `hive stop` | Stop worker session |
-| `hive nudge [worker]` | Nudge idle workers (or specific one) |
+| `hive init` | Interactive setup wizard |
+| `hive deinit` | Remove hive config and generated files |
+| `hive up` | Start the architect, workers, and watcher |
+| `hive stop` | Stop the tmux session |
 | `hive status` | Show worker status and task counts |
-| `hive role [worker]` | Generate CLAUDE_ROLE.md for worker(s) |
+| `hive nudge [worker]` | Nudge idle workers to check for tasks |
+| `hive role [worker]` | Regenerate ARCHITECT_ROLE.md and CLAUDE_ROLE.md files |
+| `hive doctor` | Check and fix common issues (missing files, etc.) |
+
+---
+
+## How It Works
+
+1. **`hive up`** starts a tmux session with:
+   - **Architect window** — AI that plans work and writes tasks
+   - **Worker windows** — One or more panes, each running an AI agent
+   - **Watch window** — Monitors tasks and nudges idle workers
+
+2. **The architect** reads `ARCHITECT_ROLE.md` and waits for your instructions. Tell it what you want to build, and it will research the codebase, propose tasks, and (with your approval) add them to the task file.
+
+3. **The watcher** monitors the task file. When it sees tasks in a lane's backlog and that lane's worker is idle, it sends a nudge.
+
+4. **Workers** receive nudges, claim a task, implement it, and push a PR. Then they wait for the next nudge.
+
+---
 
 ## Configuration
 
-Place `.hive.yaml` in your project root:
+Hive uses `.hive.yaml` in your project root:
 
 ```yaml
-backend: claude              # or "codex"
+architect:
+  backend: claude          # Claude recommended for planning
+
+workers:
+  backend: claude          # Can use codex if preferred
+
 session: my-project
 
 tasks:
-  source: yaml               # or "github"
+  source: yaml
   file: ./tasks.yaml
 
 windows:
-  - name: workers
+  - name: backend
     layout: even-horizontal
     workers:
-      - id: backend-a
-        dir: ./backend-clone-a
-        lane: reliability
-        branch:
-          local: "background-a/reliability"
-          remote: "a/reliability"
-
-      - id: backend-b
-        dir: ./backend-clone-b
-        lane: features
+      - id: backend-api
+        dir: ./backend-api
+        lane: api
+      - id: backend-auth
+        dir: ./backend-auth
+        lane: auth
 ```
 
 ### Task Sources
 
-**YAML (default)**
+**YAML (default)** — Simple file-based task queue:
+
 ```yaml
 tasks:
   source: yaml
   file: ./tasks.yaml
 ```
 
-Tasks file structure:
+Task file structure:
 ```yaml
-reliability:
+api:
   backlog:
-    - title: Fix memory leak
+    - id: add-user-endpoint
+      description: Add POST /users endpoint
+      acceptance:
+        - Returns 201 on success
+        - Validates email format
+  in_progress: []
+  done: []
+
+auth:
+  backlog: []
   in_progress: []
   done: []
 ```
 
-**GitHub Projects**
+**GitHub Projects** — Use a GitHub Project board:
+
 ```yaml
 tasks:
   source: github
-  github_org: My-Organization
+  github_org: your-org
   github_project: 4
   github_project_id: PVT_kwXXXXXX
   github_status_field_id: PVTSSF_statusXXX
@@ -98,56 +186,153 @@ tasks:
 
 ### Branch Naming
 
-Configure branch naming conventions per worker:
+Configure branch conventions per worker for clean git history:
 
 ```yaml
 workers:
-  - id: backend-a
+  - id: backend-api
+    dir: ./backend-api
+    lane: api
     branch:
-      local: "background-a/reliability"
-      remote: "a/reliability"
+      local: "backend-api/api"
+      remote: "api"
 ```
 
-Workers will be instructed to:
-- Create local branches like `background-a/reliability/my-feature`
-- Push with: `git push origin background-a/reliability/my-feature:a/reliability/my-feature`
+Workers will create branches like `backend-api/api/add-users` and push to `api/add-users`.
 
-## How It Works
+---
 
-1. **`hive up`** generates a tmuxp config and starts a tmux session with:
-   - One pane per worker, each running claude/codex
-   - A watch pane that monitors the task source
+## Git Worktrees
 
-2. **`hive watch`** (runs automatically) monitors the task source and:
-   - For YAML: watches file changes with fswatch or polling
-   - For GitHub: polls the project every 60 seconds
+When you have multiple workers, each needs their own checkout of the repo to avoid conflicts. Hive's init wizard can create git worktrees for you:
 
-3. **`hive nudge`** checks each worker's lane for:
-   - Backlog items > 0
-   - In-progress items == 0 (worker is idle)
-   - Sends a message to the tmux pane if conditions are met
+```
+my-project/
+├── backend/              # Main repo
+├── backend-api/          # Worktree for API worker
+├── backend-auth/         # Worktree for Auth worker
+└── backend-tests/        # Worktree for Tests worker
+```
 
-4. Workers receive messages instructing them to:
-   - Push any previous work to a PR first
-   - Claim one task from their backlog
-   - Use the configured branch naming convention
+Each worktree is a full checkout on its own branch, so workers can commit and push independently.
+
+---
+
+## Best Practices
+
+**Use Claude for the architect.** Planning requires stronger reasoning than execution. Claude excels at understanding codebases and scoping work.
+
+**Keep tasks small and focused.** "Add user authentication" is too big. "Add POST /login endpoint with JWT" is better.
+
+**One task per worker at a time.** Workers should finish and push before claiming new work. This keeps PRs reviewable.
+
+**Let the architect propose, you approve.** Don't let the architect add tasks without your confirmation. Review the task list before it goes to workers.
+
+**Use lanes to organize work.** Group related tasks (api, frontend, tests) so specialized workers can focus.
+
+---
 
 ## Dependencies
 
-Required:
-- `bash` 4.0+
-- `yq` - YAML parsing (`brew install yq`)
-- `tmux` - Terminal multiplexing (`brew install tmux`)
-- `tmuxp` - tmux session management (`pip install tmuxp`)
-- `claude` or `codex` - AI CLI
+**Required:**
+- `bash` 3.2+ (macOS default works)
+- [`yq`](https://github.com/mikefarah/yq) — YAML processing (`brew install yq`)
+- [`tmux`](https://github.com/tmux/tmux) — Terminal multiplexer (`brew install tmux`)
+- [`tmuxp`](https://github.com/tmux-python/tmuxp) — tmux session manager (`pip install tmuxp`)
+- `claude` or `codex` — AI CLI
 
-For GitHub task source:
-- `gh` - GitHub CLI (`brew install gh`)
-- `jq` - JSON processing (`brew install jq`)
+**For GitHub Projects:**
+- [`gh`](https://cli.github.com/) — GitHub CLI (`brew install gh`)
+- [`jq`](https://jqlang.github.io/jq/) — JSON processing (`brew install jq`)
 
-Optional:
-- `fswatch` - Efficient file watching (`brew install fswatch`)
+**Optional:**
+- [`fswatch`](https://github.com/emcrisostomo/fswatch) — Efficient file watching (`brew install fswatch`)
+- [`gum`](https://github.com/charmbracelet/gum) — Pretty prompts in init wizard (`brew install gum`)
+
+---
 
 ## Examples
 
-See the `examples/` directory for sample configurations.
+### Simple: Single Worker
+
+```yaml
+architect:
+  backend: claude
+
+workers:
+  backend: claude
+
+session: my-app
+
+tasks:
+  source: yaml
+  file: ./tasks.yaml
+
+windows:
+  - name: dev
+    workers:
+      - id: main
+        dir: .
+        lane: default
+```
+
+### Multi-Worker with Worktrees
+
+```yaml
+architect:
+  backend: claude
+
+workers:
+  backend: codex
+
+session: backend-hive
+
+tasks:
+  source: yaml
+  file: ./tasks.yaml
+
+windows:
+  - name: backend
+    layout: even-horizontal
+    workers:
+      - id: backend-api
+        dir: ./backend-api
+        lane: api
+        branch:
+          local: "backend-api/api"
+          remote: "api"
+
+      - id: backend-auth
+        dir: ./backend-auth
+        lane: auth
+        branch:
+          local: "backend-auth/auth"
+          remote: "auth"
+
+      - id: backend-tests
+        dir: ./backend-tests
+        lane: tests
+        branch:
+          local: "backend-tests/tests"
+          remote: "tests"
+```
+
+---
+
+## Uninstall
+
+```bash
+rm ~/.local/bin/hive
+```
+
+Or if you used `hive init` in a project:
+
+```bash
+hive deinit   # Removes config, role files, and optionally worktrees
+```
+
+---
+
+## License
+
+MIT

@@ -1,41 +1,42 @@
-# Multi-worker configuration with GitHub Projects
+# Multi-worker configuration with worktrees
 # Place this in your project root as .hive.yaml
 
-backend: codex
+architect:
+  backend: claude          # Claude recommended for planning
+
+workers:
+  backend: codex           # Workers can use a different backend
+
 session: my-backend
 
 tasks:
-  source: github
-  github_org: My-Organization
-  github_project: 4
-  github_project_id: PVT_kwXXXXXX
-  github_status_field_id: PVTSSF_statusXXX
-  github_lane_field_id: PVTSSF_laneXXX
+  source: yaml
+  file: ./tasks.yaml
 
 windows:
   - name: backend
     layout: even-horizontal
     workers:
-      - id: backend-a
-        dir: ./backend-clone-a
-        lane: reliability
+      - id: backend-api
+        dir: ./backend-api
+        lane: api
         branch:
-          local: "background-a/reliability"
-          remote: "a/reliability"
+          local: "backend-api/api"
+          remote: "api"
 
-      - id: backend-b
-        dir: ./backend-clone-b
-        lane: features
+      - id: backend-auth
+        dir: ./backend-auth
+        lane: auth
         branch:
-          local: "background-b/features"
-          remote: "b/features"
+          local: "backend-auth/auth"
+          remote: "auth"
 
-      - id: backend-c
-        dir: ./backend-clone-c
-        lane: observability
+      - id: backend-tests
+        dir: ./backend-tests
+        lane: tests
         branch:
-          local: "background-c/observability"
-          remote: "c/observability"
+          local: "backend-tests/tests"
+          remote: "tests"
 
   - name: support
     layout: even-horizontal

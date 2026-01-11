@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.1.1"
+VERSION="0.1.2"
 SCRIPT_NAME="hive"
 
 # Colors for output
@@ -570,6 +570,7 @@ COMMANDS:
     status            Show worker status and task counts
     watch             Run watcher loop (internal, run by 'up')
     role [worker]     Generate CLAUDE_ROLE.md for worker(s)
+    doctor            Check and fix common issues
     help              Show this help
 
 EXAMPLES:
@@ -1265,6 +1266,12 @@ EOF
   fi
 
   log_ok "Created .hive.yaml"
+
+  # Create tasks.yaml if using yaml source
+  if [[ "$task_source" == "yaml" ]]; then
+    bootstrap_tasks_file ".hive.yaml"
+  fi
+
   echo ""
 
   # Offer to generate role files
@@ -1597,6 +1604,168 @@ EOF
 EOF
 }
 
+# Bootstrap tasks.yaml with all lanes
+bootstrap_tasks_file() {
+  local config="$1"
+  local project_dir task_source tasks_file
+  project_dir=$(get_project_dir "$config")
+  task_source=$(yq -r '.tasks.source // "yaml"' "$config")
+
+  # Only for yaml task source
+  [[ "$task_source" != "yaml" ]] && return 0
+
+  tasks_file=$(yq -r '.tasks.file // "./tasks.yaml"' "$config")
+  local full_path="$project_dir/$tasks_file"
+
+  # Don't overwrite existing file
+  if [[ -f "$full_path" ]]; then
+    return 0
+  fi
+
+  log_info "Creating $tasks_file..."
+
+  # Collect all unique lanes from workers
+  local lanes=""
+  while IFS='|' read -r id window pane lane dir branch_local branch_remote; do
+    [[ -z "$id" ]] && continue
+    # Add lane if not already in list
+    if [[ ! " $lanes " == *" $lane "* ]]; then
+      lanes="$lanes $lane"
+    fi
+  done < <(build_worker_list "$config")
+
+  # Generate tasks file
+  cat > "$full_path" <<'EOF'
+# Hive Task Queue
+# The architect adds tasks here, workers claim and complete them
+
+worker_protocol:
+  claim:
+    - Check your lane's backlog for tasks
+    - Move ONE task to in_progress
+    - Set claimed_by and claimed_at
+    - Start implementing
+  done:
+    - Move task to done
+    - Add summary and files_changed
+  blocked:
+    - Add question field and wait
+
+rules:
+  - Architect plans and adds tasks (does NOT edit code)
+  - Workers claim ONE task at a time
+  - Every task needs: id, description, acceptance criteria
+  - Push PR before claiming next task
+  - If blocked, add question and wait
+
+global_backlog: []
+
+EOF
+
+  # Add each lane
+  for lane in $lanes; do
+    cat >> "$full_path" <<EOF
+$lane:
+  backlog: []
+  in_progress: []
+  done: []
+
+EOF
+  done
+
+  log_ok "Created $tasks_file with lanes:$lanes"
+}
+
+cmd_doctor() {
+  local config
+  config=$(find_config) || { log_error "No .hive.yaml found. Run 'hive init' first."; exit 1; }
+
+  local project_dir
+  project_dir=$(get_project_dir "$config")
+
+  echo ""
+  log_info "Running hive doctor..."
+  echo ""
+
+  local issues_found=0
+  local issues_fixed=0
+
+  # Check 1: tasks.yaml exists (for yaml source)
+  local task_source tasks_file
+  task_source=$(yq -r '.tasks.source // "yaml"' "$config")
+
+  if [[ "$task_source" == "yaml" ]]; then
+    tasks_file=$(yq -r '.tasks.file // "./tasks.yaml"' "$config")
+    local full_tasks_path="$project_dir/$tasks_file"
+
+    if [[ ! -f "$full_tasks_path" ]]; then
+      log_warn "Missing: $tasks_file"
+      issues_found=$((issues_found + 1))
+
+      if prompt_confirm "Create $tasks_file with all lanes?"; then
+        bootstrap_tasks_file "$config"
+        issues_fixed=$((issues_fixed + 1))
+      fi
+    else
+      log_ok "Found: $tasks_file"
+    fi
+  fi
+
+  # Check 2: ARCHITECT_ROLE.md exists
+  if [[ ! -f "$project_dir/ARCHITECT_ROLE.md" ]]; then
+    log_warn "Missing: ARCHITECT_ROLE.md"
+    issues_found=$((issues_found + 1))
+
+    if prompt_confirm "Generate ARCHITECT_ROLE.md?"; then
+      generate_architect_role "$config"
+      log_ok "Generated ARCHITECT_ROLE.md"
+      issues_fixed=$((issues_fixed + 1))
+    fi
+  else
+    log_ok "Found: ARCHITECT_ROLE.md"
+  fi
+
+  # Check 3: CLAUDE_ROLE.md for each worker
+  while IFS='|' read -r id window pane lane dir branch_local branch_remote; do
+    [[ -z "$id" ]] && continue
+    local worker_dir="$project_dir/$dir"
+    local role_file="$worker_dir/CLAUDE_ROLE.md"
+
+    if [[ ! -f "$role_file" ]]; then
+      log_warn "Missing: $dir/CLAUDE_ROLE.md"
+      issues_found=$((issues_found + 1))
+    else
+      log_ok "Found: $dir/CLAUDE_ROLE.md"
+    fi
+  done < <(build_worker_list "$config")
+
+  # Offer to regenerate all role files if any are missing
+  if [[ $issues_found -gt $issues_fixed ]]; then
+    echo ""
+    if prompt_confirm "Regenerate all role files?"; then
+      cmd_role
+      issues_fixed=$((issues_fixed + (issues_found - issues_fixed)))
+    fi
+  fi
+
+  # Check 4: Dependencies
+  echo ""
+  log_info "Checking dependencies..."
+  if check_dependencies "$config"; then
+    log_ok "All dependencies installed"
+  fi
+
+  # Summary
+  echo ""
+  if [[ $issues_found -eq 0 ]]; then
+    log_ok "No issues found. Hive is healthy!"
+  elif [[ $issues_fixed -eq $issues_found ]]; then
+    log_ok "Fixed $issues_fixed issue(s). Hive is healthy!"
+  else
+    log_warn "Found $issues_found issue(s), fixed $issues_fixed"
+  fi
+}
+
 #------------------------------------------------------------------------------
 # Main
 #------------------------------------------------------------------------------
@@ -1614,6 +1783,7 @@ main() {
     status) cmd_status "$@" ;;
     watch) cmd_watch "$@" ;;
     role) cmd_role "$@" ;;
+    doctor) cmd_doctor "$@" ;;
     -h|--help|help) cmd_help ;;
     -v|--version) echo "$SCRIPT_NAME v$VERSION" ;;
     *) log_error "Unknown command: $cmd"; cmd_help; exit 1 ;;

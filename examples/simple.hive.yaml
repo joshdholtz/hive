@@ -1,7 +1,12 @@
-# Simple single-repo configuration
+# Simple single-worker configuration
 # Place this in your project root as .hive.yaml
 
-backend: claude
+architect:
+  backend: claude          # Claude recommended for planning
+
+workers:
+  backend: claude
+
 session: my-project
 
 tasks:
@@ -9,7 +14,7 @@ tasks:
   file: ./tasks.yaml
 
 windows:
-  - name: workers
+  - name: dev
     layout: even-horizontal
     workers:
       - id: main

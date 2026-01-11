@@ -1,31 +1,51 @@
 # Example tasks.yaml for YAML task source
 # Each lane has: backlog, in_progress, done
+# The architect adds tasks, workers claim and complete them
 
-default:
+api:
   backlog:
-    - title: Implement user authentication
-      description: Add login/logout functionality
-    - title: Add unit tests for auth module
+    - id: add-users-endpoint
+      description: Add POST /users endpoint for user registration
+      acceptance:
+        - Returns 201 with user object on success
+        - Returns 400 if email already exists
+        - Validates email format
+    - id: add-users-list
+      description: Add GET /users endpoint with pagination
+      acceptance:
+        - Returns paginated list of users
+        - Supports ?page and ?limit query params
   in_progress: []
   done: []
 
-reliability:
+auth:
   backlog:
-    - title: Add retry logic to API calls
-    - title: Implement circuit breaker pattern
+    - id: add-jwt-middleware
+      description: Add JWT authentication middleware
+      acceptance:
+        - Validates JWT tokens on protected routes
+        - Returns 401 if token is invalid or expired
+        - Attaches user info to request context
   in_progress: []
   done: []
 
-features:
+tests:
   backlog:
-    - title: Add dark mode toggle
-    - title: Implement user preferences page
+    - id: api-integration-tests
+      description: Add integration tests for /users endpoints
+      acceptance:
+        - Tests happy path for POST /users
+        - Tests validation errors
+        - Tests duplicate email handling
   in_progress: []
   done: []
 
 docs:
   backlog:
-    - title: Update API documentation
-    - title: Add getting started guide
+    - id: api-documentation
+      description: Document the users API endpoints
+      acceptance:
+        - OpenAPI/Swagger spec for /users routes
+        - Example requests and responses
   in_progress: []
   done: []
