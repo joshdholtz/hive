@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.1.10"
+VERSION="0.1.11"
 SCRIPT_NAME="hive"
 
 # Colors for output
@@ -38,6 +38,14 @@ log_error() { echo -e "${RED}[error]${NC} $*" >&2; }
 
 # Portable lowercase (works in bash 3, zsh, etc.)
 lowercase() { echo "$1" | tr '[:upper:]' '[:lower:]'; }
+
+# Escape a string for YAML double-quoted output
+yaml_escape() {
+  local str="$1"
+  str="${str//\\/\\\\}"  # Escape backslashes first
+  str="${str//\"/\\\"}"  # Escape double quotes
+  echo "$str"
+}
 
 # Check if gum is available for fancy prompts
 has_gum() { command -v gum &>/dev/null; }
@@ -484,13 +492,17 @@ EOF
     arch_cmd="claude \"$arch_msg\""
   fi
 
+  # Escape for YAML double-quoted string
+  local arch_cmd_yaml
+  arch_cmd_yaml=$(yaml_escape "$arch_cmd")
+
   cat >> "$tmuxp_file" <<EOF
   - window_name: architect
     panes:
       - shell_command:
           - tmux select-pane -T "architect"
           - cd "$project_dir"
-          - $arch_cmd
+          - "$arch_cmd_yaml"
 EOF
 
   # Worker windows
@@ -540,11 +552,13 @@ EOF
         agent_cmd="claude '$escaped_msg'"
       fi
 
-      # Write YAML carefully to avoid quoting issues
+      # Write YAML with proper quoting to handle special characters (colons, quotes, etc.)
+      local agent_cmd_yaml
+      agent_cmd_yaml=$(yaml_escape "$agent_cmd")
       echo "      - shell_command:" >> "$tmuxp_file"
       echo "          - tmux select-pane -T \"$worker_id\"" >> "$tmuxp_file"
       echo "          - cd \"$abs_dir\"" >> "$tmuxp_file"
-      printf '          - %s\n' "$agent_cmd" >> "$tmuxp_file"
+      printf '          - "%s"\n' "$agent_cmd_yaml" >> "$tmuxp_file"
     done
   done
 
