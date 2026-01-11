@@ -2,6 +2,7 @@ pub mod app;
 pub mod commands;
 pub mod config;
 pub mod ipc;
+pub mod projects;
 pub mod server;
 pub mod pty;
 pub mod tasks;

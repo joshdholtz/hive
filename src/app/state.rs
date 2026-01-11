@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -7,6 +8,7 @@ use crate::app::types::PaneType;
 use crate::config::{Backend, BranchConfig};
 use crate::pty::output::OutputBuffer;
 use crate::ipc::{AppState, PaneInfo, WindowInfo};
+use crate::projects::ProjectEntry;
 use crate::tasks::TaskCounts;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +42,7 @@ pub struct ClientPane {
 
 pub struct App {
     pub project_name: String,
+    pub project_dir: PathBuf,
     pub backend: Backend,
     pub layout_mode: LayoutMode,
     pub panes: Vec<ClientPane>,
@@ -53,15 +56,27 @@ pub struct App {
     pub show_palette: bool,
     pub palette_query: String,
     pub palette_selection: usize,
+    pub show_projects: bool,
+    pub projects: Vec<ProjectEntry>,
+    pub projects_selection: usize,
+    pub projects_input: String,
+    pub projects_input_mode: bool,
+    pub projects_message: Option<String>,
     pub running: bool,
     pub task_counts: HashMap<String, TaskCounts>,
     pub zoomed: bool,
 }
 
 impl App {
-    pub fn new(backend: Backend, panes: Vec<ClientPane>, windows: Vec<AppWindow>) -> Self {
+    pub fn new(
+        backend: Backend,
+        panes: Vec<ClientPane>,
+        windows: Vec<AppWindow>,
+        project_dir: PathBuf,
+    ) -> Self {
         Self {
             project_name: "hive".to_string(),
+            project_dir,
             backend,
             layout_mode: LayoutMode::Default,
             panes,
@@ -75,6 +90,12 @@ impl App {
             show_palette: false,
             palette_query: String::new(),
             palette_selection: 0,
+            show_projects: false,
+            projects: Vec::new(),
+            projects_selection: 0,
+            projects_input: String::new(),
+            projects_input_mode: false,
+            projects_message: None,
             running: true,
             task_counts: HashMap::new(),
             zoomed: false,

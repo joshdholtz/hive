@@ -2,6 +2,7 @@ pub mod help;
 pub mod layout;
 pub mod palette;
 pub mod pane;
+pub mod projects;
 pub mod sidebar;
 pub mod status_bar;
 pub mod title_bar;
@@ -26,6 +27,10 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     if app.show_help {
         help::render_help_overlay(frame, app);
+    }
+
+    if app.show_projects {
+        projects::render_projects(frame, app);
     }
 
     if app.show_palette {

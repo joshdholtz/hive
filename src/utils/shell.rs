@@ -16,3 +16,16 @@ pub fn run_shell_command(command: &str, cwd: &Path) -> Result<()> {
 
     Ok(())
 }
+
+pub fn command_available(command: &str) -> bool {
+    let Some(paths) = std::env::var_os("PATH") else {
+        return false;
+    };
+    for path in std::env::split_paths(&paths) {
+        let full = path.join(command);
+        if full.exists() {
+            return true;
+        }
+    }
+    false
+}

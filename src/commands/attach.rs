@@ -18,6 +18,7 @@ use crate::app::{key_to_bytes, layout_visible_panes};
 use crate::app::state::{App, AppWindow, ClientPane};
 use crate::config;
 use crate::ipc::{decode_server_message, ClientMessage, PaneSize, ServerMessage};
+use crate::projects;
 use crate::ui;
 
 pub fn run(start_dir: &Path) -> Result<()> {
@@ -33,6 +34,7 @@ pub fn run(start_dir: &Path) -> Result<()> {
         crate::config::Backend::Claude,
         Vec::<ClientPane>::new(),
         Vec::<AppWindow>::new(),
+        project_dir.clone(),
     );
 
     setup_terminal()?;
@@ -242,6 +244,10 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent) -> Resu
         return Ok(false);
     }
 
+    if app.show_projects {
+        return handle_projects_key(app, key);
+    }
+
     let visible = layout_visible_panes(app);
 
     if app.show_palette {
@@ -289,6 +295,9 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent) -> Resu
                                     app.sidebar.focused = true;
                                     app.nav_mode = false;
                                 }
+                            }
+                            crate::app::palette::PaletteAction::ProjectManager => {
+                                open_project_manager(app)?;
                             }
                             crate::app::palette::PaletteAction::NudgeAll => {
                                 conn.send(ClientMessage::Nudge { worker: None })?;
@@ -454,6 +463,108 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent) -> Resu
                 })?;
             }
         }
+    }
+
+    Ok(false)
+}
+
+fn open_project_manager(app: &mut App) -> Result<()> {
+    let projects_file = projects::load_projects().unwrap_or_default();
+    app.projects = projects_file.projects;
+    app.projects_selection = 0;
+    app.projects_input.clear();
+    app.projects_input_mode = false;
+    app.projects_message = None;
+    app.show_projects = true;
+    Ok(())
+}
+
+fn handle_projects_key(app: &mut App, key: KeyEvent) -> Result<bool> {
+    if app.projects_input_mode {
+        match key.code {
+            KeyCode::Esc => {
+                app.projects_input_mode = false;
+                app.projects_input.clear();
+            }
+            KeyCode::Backspace => {
+                app.projects_input.pop();
+            }
+            KeyCode::Enter => {
+                let input = app.projects_input.trim();
+                if !input.is_empty() {
+                    let path = std::path::PathBuf::from(input);
+                    match projects::add_project(&path, None) {
+                        Ok(projects_file) => {
+                            app.projects = projects_file.projects;
+                            app.projects_message =
+                                Some(format!("Added {}", path.display()));
+                        }
+                        Err(err) => {
+                            app.projects_message = Some(format!("Failed: {}", err));
+                        }
+                    }
+                }
+                app.projects_input_mode = false;
+                app.projects_input.clear();
+            }
+            KeyCode::Char(c) => {
+                if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                    app.projects_input.push(c);
+                }
+            }
+            _ => {}
+        }
+        return Ok(false);
+    }
+
+    match key.code {
+        KeyCode::Esc => {
+            app.show_projects = false;
+        }
+        KeyCode::Up => {
+            if app.projects_selection > 0 {
+                app.projects_selection -= 1;
+            }
+        }
+        KeyCode::Down => {
+            if app.projects_selection + 1 < app.projects.len() {
+                app.projects_selection += 1;
+            }
+        }
+        KeyCode::Char('a') => {
+            let path = app.project_dir.clone();
+            match projects::add_project(&path, None) {
+                Ok(projects_file) => {
+                    app.projects = projects_file.projects;
+                    app.projects_message = Some("Added current project".to_string());
+                }
+                Err(err) => {
+                    app.projects_message = Some(format!("Failed: {}", err));
+                }
+            }
+        }
+        KeyCode::Char('A') => {
+            app.projects_input_mode = true;
+            app.projects_input.clear();
+        }
+        KeyCode::Char('d') => {
+            if let Some(project) = app.projects.get(app.projects_selection) {
+                match projects::remove_project_by_path(&project.path) {
+                    Ok(projects_file) => {
+                        app.projects = projects_file.projects;
+                        if app.projects_selection >= app.projects.len() && !app.projects.is_empty()
+                        {
+                            app.projects_selection = app.projects.len() - 1;
+                        }
+                        app.projects_message = Some("Removed project".to_string());
+                    }
+                    Err(err) => {
+                        app.projects_message = Some(format!("Failed: {}", err));
+                    }
+                }
+            }
+        }
+        _ => {}
     }
 
     Ok(false)

@@ -5,11 +5,14 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
-use crate::commands::attach;
+use crate::commands::{attach, setup};
 use crate::config;
 
 pub fn run(start_dir: &Path, daemon: bool) -> Result<()> {
-    let config_path = config::find_config(start_dir)?;
+    let config_path = match config::find_config(start_dir) {
+        Ok(path) => path,
+        Err(_) => setup::run(start_dir)?,
+    };
     let project_dir = config::project_dir(&config_path);
     let socket_path = project_dir.join(".hive").join("hive.sock");
 

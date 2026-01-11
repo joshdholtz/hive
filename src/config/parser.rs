@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct HiveConfig {
     pub architect: ArchitectConfig,
     pub workers: WorkersConfig,
@@ -15,12 +15,12 @@ pub struct HiveConfig {
     pub worker_instructions: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ArchitectConfig {
     pub backend: Backend,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct WorkersConfig {
     pub backend: Backend,
 }
@@ -32,7 +32,7 @@ pub enum Backend {
     Codex,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct TasksConfig {
     pub source: TaskSource,
     pub file: Option<String>,
@@ -43,21 +43,21 @@ pub struct TasksConfig {
     pub github_lane_field_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum TaskSource {
     Yaml,
     Github,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct WindowConfig {
     pub name: String,
     pub layout: Option<String>,
     pub workers: Vec<WorkerConfig>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct WorkerConfig {
     pub id: String,
     pub dir: Option<String>,
@@ -71,7 +71,7 @@ pub struct BranchConfig {
     pub remote: String,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct MessagesConfig {
     pub startup: Option<String>,
     pub nudge: Option<String>,
