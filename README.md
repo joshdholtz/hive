@@ -160,15 +160,33 @@ setup:
 
 Commands run in order from the project root. If any command fails, `hive up` stops.
 
-### Worker Instructions
+### Messages
 
-Add custom instructions sent to workers on startup and with each nudge:
+Customize the messages sent to workers. These are generated with sensible defaults by `hive init`, but you can edit them for your workflow:
+
+```yaml
+messages:
+  startup: |
+    Read HIVE_WORKER.md if it exists. You are assigned to lane '{lane}'.
+    Check your task backlog, claim ONE task, and work on it.
+    When finished, create a PR using 'gh pr create'.
+  nudge: |
+    You have {backlog_count} task(s) in lane '{lane}'.
+    Claim ONE task and work on it.
+```
+
+**Available variables:**
+- `{lane}` - The worker's assigned lane
+- `{backlog_count}` - Number of tasks in the backlog (nudge only)
+
+### Worker Instructions (for HIVE_WORKER.md)
+
+Add project-specific instructions that get written to HIVE_WORKER.md files:
 
 ```yaml
 worker_instructions: |
   Always run mix test before pushing.
   Use conventional commit format.
-  Target the develop branch for PRs.
 ```
 
 ### Task Sources

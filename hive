@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.1.6"
+VERSION="0.1.7"
 SCRIPT_NAME="hive"
 
 # Colors for output
@@ -21,6 +21,11 @@ RETRY_INTERVAL=2
 # GitHub cache
 _GH_ITEMS_CACHE=""
 _GH_ITEMS_CACHE_TIME=0
+
+# Default messages (can be overridden in .hive.yaml)
+DEFAULT_STARTUP_MSG="Read HIVE_WORKER.md if it exists. You are assigned to lane '{lane}'. Check your task backlog, claim ONE task, and work on it. CRITICAL: When finished, you MUST create a git branch, commit your changes, push to remote, and create a Pull Request using 'gh pr create'. Do NOT stop until the PR URL is displayed."
+
+DEFAULT_NUDGE_MSG="FIRST: If you have uncommitted changes or an unpushed branch from a previous task, you MUST create a PR NOW using 'gh pr create' before starting anything new. You have {backlog_count} task(s) in your backlog for lane '{lane}'. Claim ONE task and work on it. REMINDER: When done, create a branch, commit, push, and run 'gh pr create' - do NOT stop until the PR URL is displayed."
 
 #------------------------------------------------------------------------------
 # Utility functions
@@ -516,16 +521,14 @@ EOF
       local abs_dir="$project_dir/$worker_dir"
       abs_dir=$(cd "$abs_dir" 2>/dev/null && pwd || echo "$abs_dir")
 
-      # Build agent command
+      # Build agent command - use config message or default
       local agent_cmd initial_msg
-      initial_msg="Read HIVE_WORKER.md if it exists. You are assigned to lane '$worker_lane'. Check your task backlog, claim ONE task, and work on it. CRITICAL: When finished, you MUST create a git branch, commit your changes, push to remote, and create a Pull Request using 'gh pr create'. Do NOT stop until the PR URL is displayed."
-
-      # Add custom worker instructions if configured
-      local custom_instructions
-      custom_instructions=$(yq -r '.worker_instructions // ""' "$config")
-      if [[ -n "$custom_instructions" && "$custom_instructions" != "null" ]]; then
-        initial_msg="$initial_msg ADDITIONAL INSTRUCTIONS: $custom_instructions"
+      initial_msg=$(yq -r '.messages.startup // ""' "$config")
+      if [[ -z "$initial_msg" || "$initial_msg" == "null" ]]; then
+        initial_msg="$DEFAULT_STARTUP_MSG"
       fi
+      # Replace template variables
+      initial_msg="${initial_msg//\{lane\}/$worker_lane}"
 
       if [[ "$workers_backend" == "codex" ]]; then
         agent_cmd="env -u CODEX_SANDBOX -u CODEX_SANDBOX_NETWORK_DISABLED codex --sandbox danger-full-access --ask-for-approval \"never\" \"$initial_msg\""
@@ -709,19 +712,19 @@ cmd_nudge() {
 
     # Only nudge if has backlog and not busy
     if [[ "$backlog_count" -gt 0 && "$in_progress_count" -eq 0 ]]; then
-      # Build nudge message
-      local msg="FIRST: If you have uncommitted changes or an unpushed branch from a previous task, you MUST create a PR NOW using 'gh pr create' before starting anything new. You have $backlog_count task(s) in your backlog for lane '$lane'. Claim ONE task and work on it. REMINDER: When done, create a branch, commit, push, and run 'gh pr create' - do NOT stop until the PR URL is displayed."
+      # Build nudge message - use config message or default
+      local msg
+      msg=$(yq -r '.messages.nudge // ""' "$config")
+      if [[ -z "$msg" || "$msg" == "null" ]]; then
+        msg="$DEFAULT_NUDGE_MSG"
+      fi
+      # Replace template variables
+      msg="${msg//\{lane\}/$lane}"
+      msg="${msg//\{backlog_count\}/$backlog_count}"
 
       # Add branch naming convention if configured
       if [[ -n "$branch_local" && -n "$branch_remote" ]]; then
-        msg="$msg IMPORTANT: Your LOCAL branch names MUST start with '$branch_local/' (e.g. '$branch_local/my-feature'). Push to remote with: git push origin $branch_local/my-feature:$branch_remote/my-feature"
-      fi
-
-      # Add custom worker instructions if configured
-      local custom_instructions
-      custom_instructions=$(yq -r '.worker_instructions // ""' "$config")
-      if [[ -n "$custom_instructions" && "$custom_instructions" != "null" ]]; then
-        msg="$msg ADDITIONAL INSTRUCTIONS: $custom_instructions"
+        msg="$msg BRANCH CONVENTION: Your LOCAL branch names MUST start with '$branch_local/' (e.g. '$branch_local/my-feature'). Push to remote with: git push origin $branch_local/my-feature:$branch_remote/my-feature"
       fi
 
       # Send to tmux pane
@@ -1267,6 +1270,26 @@ windows:
         lane: default
 EOF
   fi
+
+  # Add messages section with defaults
+  cat >> .hive.yaml <<'EOF'
+
+# Messages sent to workers (customize these for your workflow)
+# Available variables: {lane}, {backlog_count}
+messages:
+  startup: |
+    Read HIVE_WORKER.md if it exists. You are assigned to lane '{lane}'.
+    Check your task backlog, claim ONE task, and work on it.
+    CRITICAL: When finished, you MUST create a git branch, commit your changes,
+    push to remote, and create a Pull Request using 'gh pr create'.
+    Do NOT stop until the PR URL is displayed.
+  nudge: |
+    You have {backlog_count} task(s) in your backlog for lane '{lane}'.
+    If you have uncommitted changes from a previous task, create a PR NOW using
+    'gh pr create' before starting anything new.
+    Claim ONE task and work on it.
+    REMINDER: When done, create a branch, commit, push, and run 'gh pr create'.
+EOF
 
   # Create any pending worktrees now that config is complete
   if [[ ${#pending_worktrees[@]} -gt 0 ]]; then
