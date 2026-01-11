@@ -4,7 +4,7 @@ set -euo pipefail
 # Hive installer
 # Usage: curl -fsSL https://raw.githubusercontent.com/joshdholtz/hive/main/install.sh | bash
 
-VERSION="0.1.11"
+VERSION="0.1.12"
 REPO="joshdholtz/hive"
 INSTALL_DIR="${HIVE_INSTALL_DIR:-$HOME/.local/bin}"
 
