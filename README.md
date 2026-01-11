@@ -10,7 +10,7 @@ Hive orchestrates multiple Claude or Codex instances working in parallel on your
 
 ```
 ┌─────────────┐     ┌───────────────────┐     ┌─────────────┐
-│  ARCHITECT  │────▶│  hive_tasks.yaml  │◀────│   WATCHER   │
+│  ARCHITECT  │────▶│  .hive/tasks.yaml │◀────│   WATCHER   │
 │   (plans)   │     │                   │     │  (nudges)   │
 └─────────────┘     └───────────────────┘     └─────────────┘
                            │
@@ -99,7 +99,7 @@ The `hive init` wizard will guide you through:
 | `hive stop` | Stop the tmux session |
 | `hive status` | Show worker status and task counts |
 | `hive nudge [worker]` | Nudge idle workers to check for tasks |
-| `hive role [worker]` | Regenerate HIVE_ARCHITECT.md and HIVE_WORKER.md files |
+| `hive role [worker]` | Regenerate .hive/ARCHITECT.md and .hive/workers/*/WORKER.md files |
 | `hive doctor` | Check and fix common issues (missing files, etc.) |
 
 ---
@@ -111,7 +111,7 @@ The `hive init` wizard will guide you through:
    - **Worker windows** — One or more panes, each running an AI agent
    - **Watch window** — Monitors tasks and nudges idle workers
 
-2. **The architect** reads `HIVE_ARCHITECT.md` and waits for your instructions. Tell it what you want to build, and it will research the codebase, propose tasks, and (with your approval) add them to the task file.
+2. **The architect** reads `.hive/ARCHITECT.md` and waits for your instructions. Tell it what you want to build, and it will research the codebase, propose tasks, and (with your approval) add them to the task file.
 
 3. **The watcher** monitors the task file. When it sees tasks in a lane's backlog and that lane's worker is idle, it sends a nudge.
 
@@ -134,7 +134,7 @@ session: my-project
 
 tasks:
   source: yaml
-  file: ./hive_tasks.yaml
+  file: .hive/tasks.yaml
 
 windows:
   - name: backend
@@ -167,9 +167,9 @@ Customize the messages sent to workers. These are generated with sensible defaul
 ```yaml
 messages:
   startup: |
-    Read HIVE_WORKER.md if it exists. You are assigned to lane '{lane}'.
-    Check your task backlog, claim ONE task, and work on it.
-    When finished, create a PR using 'gh pr create'.
+    Read .hive/workers/{lane}/WORKER.md if it exists. You are assigned to lane '{lane}'.
+    Check your task backlog. If empty, STOP. If tasks exist, claim ONE and work on it.
+    When finished, create a PR.
   nudge: |
     You have {backlog_count} task(s) in lane '{lane}'.
     Claim ONE task and work on it.
@@ -179,9 +179,9 @@ messages:
 - `{lane}` - The worker's assigned lane
 - `{backlog_count}` - Number of tasks in the backlog (nudge only)
 
-### Worker Instructions (for HIVE_WORKER.md)
+### Worker Instructions
 
-Add project-specific instructions that get written to HIVE_WORKER.md files:
+Add project-specific instructions that get written to `.hive/workers/*/WORKER.md` files:
 
 ```yaml
 worker_instructions: |
@@ -196,7 +196,7 @@ worker_instructions: |
 ```yaml
 tasks:
   source: yaml
-  file: ./hive_tasks.yaml
+  file: .hive/tasks.yaml
 ```
 
 Task file structure:
@@ -311,7 +311,7 @@ session: my-app
 
 tasks:
   source: yaml
-  file: ./hive_tasks.yaml
+  file: .hive/tasks.yaml
 
 windows:
   - name: dev
@@ -334,7 +334,7 @@ session: backend-hive
 
 tasks:
   source: yaml
-  file: ./hive_tasks.yaml
+  file: .hive/tasks.yaml
 
 windows:
   - name: backend
