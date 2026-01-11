@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/joshdholtz/hive/main/banner.svg" alt="Hive - One architect plans, many workers execute" width="600">
+  <img src="https://raw.githubusercontent.com/joshdholtz/hive/main/banner.svg?v=2" alt="Hive - One architect plans, many workers execute" width="600">
 </p>
 
 <p align="center">
