@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.1.9"
+VERSION="0.1.10"
 SCRIPT_NAME="hive"
 
 # Colors for output
@@ -531,18 +531,20 @@ EOF
       initial_msg="${initial_msg//\{lane\}/$worker_lane}"
       initial_msg=$(echo "$initial_msg" | tr '\n' ' ' | sed 's/  */ /g')
 
+      # Escape single quotes for shell (replace ' with '\''')
+      local escaped_msg="${initial_msg//\'/\'\\\'\'}"
+
       if [[ "$workers_backend" == "codex" ]]; then
-        agent_cmd="env -u CODEX_SANDBOX -u CODEX_SANDBOX_NETWORK_DISABLED codex --sandbox danger-full-access --ask-for-approval \"never\" \"$initial_msg\""
+        agent_cmd="env -u CODEX_SANDBOX -u CODEX_SANDBOX_NETWORK_DISABLED codex --sandbox danger-full-access --ask-for-approval never '$escaped_msg'"
       else
-        agent_cmd="claude \"$initial_msg\""
+        agent_cmd="claude '$escaped_msg'"
       fi
 
-      cat >> "$tmuxp_file" <<EOF
-      - shell_command:
-          - tmux select-pane -T "$worker_id"
-          - cd "$abs_dir"
-          - $agent_cmd
-EOF
+      # Write YAML carefully to avoid quoting issues
+      echo "      - shell_command:" >> "$tmuxp_file"
+      echo "          - tmux select-pane -T \"$worker_id\"" >> "$tmuxp_file"
+      echo "          - cd \"$abs_dir\"" >> "$tmuxp_file"
+      printf '          - %s\n' "$agent_cmd" >> "$tmuxp_file"
     done
   done
 
