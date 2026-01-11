@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.1.8"
+VERSION="0.1.9"
 SCRIPT_NAME="hive"
 
 # Colors for output
@@ -527,8 +527,9 @@ EOF
       if [[ -z "$initial_msg" || "$initial_msg" == "null" ]]; then
         initial_msg="$DEFAULT_STARTUP_MSG"
       fi
-      # Replace template variables
+      # Replace template variables and convert to single line
       initial_msg="${initial_msg//\{lane\}/$worker_lane}"
+      initial_msg=$(echo "$initial_msg" | tr '\n' ' ' | sed 's/  */ /g')
 
       if [[ "$workers_backend" == "codex" ]]; then
         agent_cmd="env -u CODEX_SANDBOX -u CODEX_SANDBOX_NETWORK_DISABLED codex --sandbox danger-full-access --ask-for-approval \"never\" \"$initial_msg\""
@@ -718,9 +719,10 @@ cmd_nudge() {
       if [[ -z "$msg" || "$msg" == "null" ]]; then
         msg="$DEFAULT_NUDGE_MSG"
       fi
-      # Replace template variables
+      # Replace template variables and convert to single line
       msg="${msg//\{lane\}/$lane}"
       msg="${msg//\{backlog_count\}/$backlog_count}"
+      msg=$(echo "$msg" | tr '\n' ' ' | sed 's/  */ /g')
 
       # Add branch naming convention if configured
       if [[ -n "$branch_local" && -n "$branch_remote" ]]; then
