@@ -9,10 +9,10 @@
 Hive orchestrates multiple Claude or Codex instances working in parallel on your codebase. Instead of one AI doing tasks sequentially, run 3, 5, or 10 workers simultaneously—each focused on their own lane of work, coordinated by an architect agent.
 
 ```
-┌─────────────┐     ┌──────────────┐     ┌─────────────┐
-│  ARCHITECT  │────▶│  tasks.yaml  │◀────│   WATCHER   │
-│   (plans)   │     │              │     │  (nudges)   │
-└─────────────┘     └──────────────┘     └─────────────┘
+┌─────────────┐     ┌───────────────────┐     ┌─────────────┐
+│  ARCHITECT  │────▶│  hive_tasks.yaml  │◀────│   WATCHER   │
+│   (plans)   │     │                   │     │  (nudges)   │
+└─────────────┘     └───────────────────┘     └─────────────┘
                            │
               ┌────────────┼────────────┐
               ▼            ▼            ▼
@@ -99,7 +99,7 @@ The `hive init` wizard will guide you through:
 | `hive stop` | Stop the tmux session |
 | `hive status` | Show worker status and task counts |
 | `hive nudge [worker]` | Nudge idle workers to check for tasks |
-| `hive role [worker]` | Regenerate ARCHITECT_ROLE.md and WORKER_ROLE.md files |
+| `hive role [worker]` | Regenerate HIVE_ARCHITECT.md and HIVE_WORKER.md files |
 | `hive doctor` | Check and fix common issues (missing files, etc.) |
 
 ---
@@ -111,7 +111,7 @@ The `hive init` wizard will guide you through:
    - **Worker windows** — One or more panes, each running an AI agent
    - **Watch window** — Monitors tasks and nudges idle workers
 
-2. **The architect** reads `ARCHITECT_ROLE.md` and waits for your instructions. Tell it what you want to build, and it will research the codebase, propose tasks, and (with your approval) add them to the task file.
+2. **The architect** reads `HIVE_ARCHITECT.md` and waits for your instructions. Tell it what you want to build, and it will research the codebase, propose tasks, and (with your approval) add them to the task file.
 
 3. **The watcher** monitors the task file. When it sees tasks in a lane's backlog and that lane's worker is idle, it sends a nudge.
 
@@ -134,7 +134,7 @@ session: my-project
 
 tasks:
   source: yaml
-  file: ./tasks.yaml
+  file: ./hive_tasks.yaml
 
 windows:
   - name: backend
@@ -155,7 +155,7 @@ windows:
 ```yaml
 tasks:
   source: yaml
-  file: ./tasks.yaml
+  file: ./hive_tasks.yaml
 ```
 
 Task file structure:
@@ -270,7 +270,7 @@ session: my-app
 
 tasks:
   source: yaml
-  file: ./tasks.yaml
+  file: ./hive_tasks.yaml
 
 windows:
   - name: dev
@@ -293,7 +293,7 @@ session: backend-hive
 
 tasks:
   source: yaml
-  file: ./tasks.yaml
+  file: ./hive_tasks.yaml
 
 windows:
   - name: backend

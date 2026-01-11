@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.1.2"
+VERSION="0.1.3"
 SCRIPT_NAME="hive"
 
 # Colors for output
@@ -428,7 +428,7 @@ get_task_counts() {
     # YAML task source
     local tasks_file project_dir
     project_dir=$(get_project_dir "$config")
-    tasks_file=$(yq -r '.tasks.file // "./tasks.yaml"' "$config")
+    tasks_file=$(yq -r '.tasks.file // "./hive_tasks.yaml"' "$config")
     tasks_file="$project_dir/$tasks_file"
 
     if [[ -f "$tasks_file" ]]; then
@@ -471,7 +471,7 @@ windows:
 EOF
 
   # Architect window (always first)
-  local arch_msg="Read ARCHITECT_ROLE.md. You are the architect - plan tasks but do NOT edit code. Add tasks to the tasks file for workers to pick up."
+  local arch_msg="Read HIVE_ARCHITECT.md. You are the architect - plan tasks but do NOT edit code. Add tasks to the tasks file for workers to pick up."
   local arch_cmd
   if [[ "$arch_backend" == "codex" ]]; then
     arch_cmd="env -u CODEX_SANDBOX -u CODEX_SANDBOX_NETWORK_DISABLED codex --sandbox danger-full-access --ask-for-approval \"never\" \"$arch_msg\""
@@ -518,7 +518,7 @@ EOF
 
       # Build agent command
       local agent_cmd initial_msg
-      initial_msg="Read WORKER_ROLE.md if it exists. You are assigned to lane '$worker_lane'. Check your task backlog, claim ONE task, and work on it. Push a PR when done."
+      initial_msg="Read HIVE_WORKER.md if it exists. You are assigned to lane '$worker_lane'. Check your task backlog, claim ONE task, and work on it. Push a PR when done."
 
       if [[ "$workers_backend" == "codex" ]]; then
         agent_cmd="env -u CODEX_SANDBOX -u CODEX_SANDBOX_NETWORK_DISABLED codex --sandbox danger-full-access --ask-for-approval \"never\" \"$initial_msg\""
@@ -567,7 +567,7 @@ COMMANDS:
     nudge [worker]    Nudge idle workers (or specific one)
     status            Show worker status and task counts
     watch             Run watcher loop (internal, run by 'up')
-    role [worker]     Generate WORKER_ROLE.md for worker(s)
+    role [worker]     Generate HIVE_WORKER.md for worker(s)
     doctor            Check and fix common issues
     help              Show this help
 
@@ -809,7 +809,7 @@ cmd_watch() {
   else
     local tasks_file project_dir
     project_dir=$(get_project_dir "$config")
-    tasks_file=$(yq -r '.tasks.file // "./tasks.yaml"' "$config")
+    tasks_file=$(yq -r '.tasks.file // "./hive_tasks.yaml"' "$config")
     tasks_file="$project_dir/$tasks_file"
 
     if command -v fswatch &>/dev/null; then
@@ -936,7 +936,7 @@ cmd_init() {
     github_status_field=$(prompt_input "Status field ID" "" "PVTSSF_...")
     github_lane_field=$(prompt_input "Lane field ID" "" "PVTSSF_...")
   else
-    tasks_file=$(prompt_input "Tasks file path" "./tasks.yaml")
+    tasks_file=$(prompt_input "Tasks file path" "./hive_tasks.yaml")
   fi
 
   # Step 4: Scan and select directories
@@ -1274,7 +1274,7 @@ EOF
 
   # Offer to generate role files
   if [[ ${#workers[@]} -gt 0 ]]; then
-    if prompt_confirm "Generate WORKER_ROLE.md files for workers?" "y"; then
+    if prompt_confirm "Generate HIVE_WORKER.md files for workers?" "y"; then
       cmd_role
     fi
   fi
@@ -1316,28 +1316,28 @@ cmd_deinit() {
   local -a files_to_remove=()
   local -a worktrees_to_remove=()
 
-  # Check for ARCHITECT_ROLE.md
-  if [[ -f "$project_dir/ARCHITECT_ROLE.md" ]]; then
-    files_to_remove+=("$project_dir/ARCHITECT_ROLE.md")
+  # Check for HIVE_ARCHITECT.md
+  if [[ -f "$project_dir/HIVE_ARCHITECT.md" ]]; then
+    files_to_remove+=("$project_dir/HIVE_ARCHITECT.md")
   fi
 
   # Check for tasks.yaml
   local tasks_file
-  tasks_file=$(yq -r '.tasks.file // "./tasks.yaml"' "$config")
+  tasks_file=$(yq -r '.tasks.file // "./hive_tasks.yaml"' "$config")
   tasks_file="$project_dir/$tasks_file"
   if [[ -f "$tasks_file" ]]; then
     files_to_remove+=("$tasks_file")
   fi
 
-  # Find WORKER_ROLE.md files and detect worktrees
+  # Find HIVE_WORKER.md files and detect worktrees
   while IFS='|' read -r id window pane lane dir branch_local branch_remote; do
     [[ -z "$id" ]] && continue
 
     local abs_dir="$project_dir/$dir"
 
-    # Check for WORKER_ROLE.md
-    if [[ -f "$abs_dir/WORKER_ROLE.md" ]]; then
-      files_to_remove+=("$abs_dir/WORKER_ROLE.md")
+    # Check for HIVE_WORKER.md
+    if [[ -f "$abs_dir/HIVE_WORKER.md" ]]; then
+      files_to_remove+=("$abs_dir/HIVE_WORKER.md")
     fi
 
     # Check if this is a git worktree (has .git file, not directory)
@@ -1420,7 +1420,7 @@ cmd_role() {
     [[ -n "$specific_worker" && "$id" != "$specific_worker" ]] && continue
 
     local abs_dir="$project_dir/$dir"
-    local role_file="$abs_dir/WORKER_ROLE.md"
+    local role_file="$abs_dir/HIVE_WORKER.md"
 
     # Check if custom content exists
     local custom_content=""
@@ -1470,7 +1470,7 @@ Tasks are managed in GitHub Project #$github_project.
 EOF
     else
       local tasks_file
-      tasks_file=$(yq -r '.tasks.file // "./tasks.yaml"' "$config")
+      tasks_file=$(yq -r '.tasks.file // "./hive_tasks.yaml"' "$config")
 
       # Compute relative path from worker dir to tasks file
       # Count depth of worker dir and prepend ../
@@ -1514,21 +1514,21 @@ EOF
 
   done < <(build_worker_list "$config")
 
-  # Generate ARCHITECT_ROLE.md
+  # Generate HIVE_ARCHITECT.md
   generate_architect_role "$config"
 
   log_ok "Role files generated"
 }
 
-# Generate ARCHITECT_ROLE.md
+# Generate HIVE_ARCHITECT.md
 generate_architect_role() {
   local config="$1"
   local project_dir task_source tasks_file
   project_dir=$(get_project_dir "$config")
   task_source=$(yq -r '.tasks.source // "yaml"' "$config")
-  tasks_file=$(yq -r '.tasks.file // "./tasks.yaml"' "$config")
+  tasks_file=$(yq -r '.tasks.file // "./hive_tasks.yaml"' "$config")
 
-  local role_file="$project_dir/ARCHITECT_ROLE.md"
+  local role_file="$project_dir/HIVE_ARCHITECT.md"
 
   # Collect worker lanes for reference
   local lanes=""
@@ -1629,7 +1629,7 @@ bootstrap_tasks_file() {
   # Only for yaml task source
   [[ "$task_source" != "yaml" ]] && return 0
 
-  tasks_file=$(yq -r '.tasks.file // "./tasks.yaml"' "$config")
+  tasks_file=$(yq -r '.tasks.file // "./hive_tasks.yaml"' "$config")
   local full_path="$project_dir/$tasks_file"
 
   # Don't overwrite existing file
@@ -1710,7 +1710,7 @@ cmd_doctor() {
   task_source=$(yq -r '.tasks.source // "yaml"' "$config")
 
   if [[ "$task_source" == "yaml" ]]; then
-    tasks_file=$(yq -r '.tasks.file // "./tasks.yaml"' "$config")
+    tasks_file=$(yq -r '.tasks.file // "./hive_tasks.yaml"' "$config")
     local full_tasks_path="$project_dir/$tasks_file"
 
     if [[ ! -f "$full_tasks_path" ]]; then
@@ -1726,40 +1726,40 @@ cmd_doctor() {
     fi
   fi
 
-  # Check 2: ARCHITECT_ROLE.md exists
-  if [[ ! -f "$project_dir/ARCHITECT_ROLE.md" ]]; then
-    log_warn "Missing: ARCHITECT_ROLE.md"
+  # Check 2: HIVE_ARCHITECT.md exists
+  if [[ ! -f "$project_dir/HIVE_ARCHITECT.md" ]]; then
+    log_warn "Missing: HIVE_ARCHITECT.md"
     issues_found=$((issues_found + 1))
 
-    if prompt_confirm "Generate ARCHITECT_ROLE.md?"; then
+    if prompt_confirm "Generate HIVE_ARCHITECT.md?"; then
       generate_architect_role "$config"
-      log_ok "Generated ARCHITECT_ROLE.md"
+      log_ok "Generated HIVE_ARCHITECT.md"
       issues_fixed=$((issues_fixed + 1))
     fi
   else
-    log_ok "Found: ARCHITECT_ROLE.md"
+    log_ok "Found: HIVE_ARCHITECT.md"
   fi
 
-  # Check 3: WORKER_ROLE.md for each worker (and clean up old CLAUDE_ROLE.md)
+  # Check 3: HIVE_WORKER.md for each worker (and clean up old CLAUDE_ROLE.md)
   local -a old_role_files=()
   while IFS='|' read -r id window pane lane dir branch_local branch_remote; do
     [[ -z "$id" ]] && continue
     local worker_dir="$project_dir/$dir"
-    local role_file="$worker_dir/WORKER_ROLE.md"
+    local role_file="$worker_dir/HIVE_WORKER.md"
     local old_role_file="$worker_dir/CLAUDE_ROLE.md"
 
     # Check for old CLAUDE_ROLE.md files
     if [[ -f "$old_role_file" ]]; then
-      log_warn "Found old: $dir/CLAUDE_ROLE.md (renamed to WORKER_ROLE.md)"
+      log_warn "Found old: $dir/CLAUDE_ROLE.md (renamed to HIVE_WORKER.md)"
       old_role_files+=("$old_role_file")
       issues_found=$((issues_found + 1))
     fi
 
     if [[ ! -f "$role_file" ]]; then
-      log_warn "Missing: $dir/WORKER_ROLE.md"
+      log_warn "Missing: $dir/HIVE_WORKER.md"
       issues_found=$((issues_found + 1))
     else
-      log_ok "Found: $dir/WORKER_ROLE.md"
+      log_ok "Found: $dir/HIVE_WORKER.md"
     fi
   done < <(build_worker_list "$config")
 
