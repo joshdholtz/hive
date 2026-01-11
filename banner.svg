@@ -13,10 +13,12 @@
   <!-- Background -->
   <rect width="800" height="200" fill="url(#bg)"/>
 
-  <!-- Decorative hexagons on left - tighter spacing, thicker stroke -->
-  <polygon points="40,55 62,42 84,55 84,81 62,94 40,81" fill="none" stroke="#FFD700" stroke-width="2.5" opacity="0.3"/>
-  <polygon points="84,81 106,68 128,81 128,107 106,120 84,107" fill="none" stroke="#FFD700" stroke-width="2.5" opacity="0.4"/>
-  <polygon points="40,107 62,94 84,107 84,133 62,146 40,133" fill="none" stroke="#FFD700" stroke-width="2.5" opacity="0.25"/>
+  <!-- Decorative hexagons on left - true honeycomb, thick stroke -->
+  <polygon points="25,70 45,58 65,70 65,94 45,106 25,94" fill="none" stroke="#FFD700" stroke-width="4" opacity="0.35"/>
+  <polygon points="65,70 85,58 105,70 105,94 85,106 65,94" fill="none" stroke="#FFD700" stroke-width="4" opacity="0.45"/>
+  <polygon points="45,106 65,94 85,106 85,130 65,142 45,130" fill="none" stroke="#FFD700" stroke-width="4" opacity="0.4"/>
+  <polygon points="25,142 45,130 65,142 65,166 45,178 25,166" fill="none" stroke="#FFD700" stroke-width="4" opacity="0.3"/>
+  <polygon points="65,142 85,130 105,142 105,166 85,178 65,166" fill="none" stroke="#FFD700" stroke-width="4" opacity="0.35"/>
 
   <!-- Main honeycomb icon -->
   <g transform="translate(200, 100)">
@@ -37,8 +39,10 @@
   <!-- Tagline - bold -->
   <text x="280" y="152" font-family="system-ui, -apple-system, sans-serif" font-size="18" font-weight="bold" fill="#aaaaaa">One architect plans, many workers execute</text>
 
-  <!-- Decorative hexagons on right - tighter spacing, thicker stroke -->
-  <polygon points="716,55 738,42 760,55 760,81 738,94 716,81" fill="none" stroke="#FFD700" stroke-width="2.5" opacity="0.3"/>
-  <polygon points="672,81 694,68 716,81 716,107 694,120 672,107" fill="none" stroke="#FFD700" stroke-width="2.5" opacity="0.4"/>
-  <polygon points="716,107 738,94 760,107 760,133 738,146 716,133" fill="none" stroke="#FFD700" stroke-width="2.5" opacity="0.25"/>
+  <!-- Decorative hexagons on right - true honeycomb, thick stroke -->
+  <polygon points="695,70 715,58 735,70 735,94 715,106 695,94" fill="none" stroke="#FFD700" stroke-width="4" opacity="0.35"/>
+  <polygon points="735,70 755,58 775,70 775,94 755,106 735,94" fill="none" stroke="#FFD700" stroke-width="4" opacity="0.45"/>
+  <polygon points="715,106 735,94 755,106 755,130 735,142 715,130" fill="none" stroke="#FFD700" stroke-width="4" opacity="0.4"/>
+  <polygon points="695,142 715,130 735,142 735,166 715,178 695,166" fill="none" stroke="#FFD700" stroke-width="4" opacity="0.3"/>
+  <polygon points="735,142 755,130 775,142 775,166 755,178 735,166" fill="none" stroke="#FFD700" stroke-width="4" opacity="0.35"/>
 </svg>
