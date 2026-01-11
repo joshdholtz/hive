@@ -23,7 +23,7 @@ _GH_ITEMS_CACHE=""
 _GH_ITEMS_CACHE_TIME=0
 
 # Default messages (can be overridden in .hive.yaml)
-DEFAULT_STARTUP_MSG="Read .hive/workers/{lane}/WORKER.md if it exists. You are assigned to lane '{lane}'. Check your task backlog, claim ONE task, and work on it. CRITICAL: When finished, you MUST create a git branch, commit your changes, push to remote, and create a Pull Request using 'gh pr create'. Do NOT stop until the PR URL is displayed."
+DEFAULT_STARTUP_MSG="Read .hive/workers/{lane}/WORKER.md if it exists. You are assigned to lane '{lane}'. Check your task backlog. If backlog is EMPTY, report 'No tasks in backlog for {lane}' and STOP - do NOT explore or look for other work. If tasks exist, claim ONE task and work on it. When finished, create a git branch, commit, push, and create a Pull Request."
 
 DEFAULT_NUDGE_MSG="FIRST: If you have uncommitted changes or an unpushed branch from a previous task, you MUST create a PR NOW using 'gh pr create' before starting anything new. You have {backlog_count} task(s) in your backlog for lane '{lane}'. Claim ONE task and work on it. REMINDER: When done, create a branch, commit, push, and run 'gh pr create' - do NOT stop until the PR URL is displayed."
 
@@ -1428,16 +1428,15 @@ EOF
 messages:
   startup: |
     Read .hive/workers/{lane}/WORKER.md if it exists. You are assigned to lane '{lane}'.
-    Check your task backlog, claim ONE task, and work on it.
-    CRITICAL: When finished, you MUST create a git branch, commit your changes,
-    push to remote, and create a Pull Request using 'gh pr create'.
-    Do NOT stop until the PR URL is displayed.
+    Check your task backlog. If backlog is EMPTY, report 'No tasks in backlog for {lane}'
+    and STOP - do NOT explore or look for other work.
+    If tasks exist, claim ONE task and work on it.
+    When finished, create a git branch, commit, push, and create a Pull Request.
   nudge: |
     You have {backlog_count} task(s) in your backlog for lane '{lane}'.
-    If you have uncommitted changes from a previous task, create a PR NOW using
-    'gh pr create' before starting anything new.
+    If you have uncommitted changes from a previous task, create a PR first.
     Claim ONE task and work on it.
-    REMINDER: When done, create a branch, commit, push, and run 'gh pr create'.
+    When done, create a branch, commit, push, and create a Pull Request.
 EOF
 
   # Create any pending worktrees now that config is complete
@@ -1631,6 +1630,14 @@ You are a background worker assigned to lane **$lane**.
 3. **CRITICAL: You MUST create a Pull Request before stopping or claiming another task**
 4. If you have uncommitted changes from a previous task, create a PR for them FIRST
 5. Do NOT stop working until you see a PR URL displayed
+
+## When Backlog is Empty
+If your lane's backlog is empty, **STOP IMMEDIATELY**.
+- Report "No tasks in backlog for lane $lane"
+- Do NOT look for other work
+- Do NOT explore the codebase
+- Do NOT make suggestions
+- Simply wait for the architect to add tasks
 
 ## Creating a Pull Request (REQUIRED)
 After completing a task, you MUST follow these steps:
@@ -2022,16 +2029,15 @@ cmd_doctor() {
 messages:
   startup: |
     Read .hive/workers/{lane}/WORKER.md if it exists. You are assigned to lane '{lane}'.
-    Check your task backlog, claim ONE task, and work on it.
-    CRITICAL: When finished, you MUST create a git branch, commit your changes,
-    push to remote, and create a Pull Request using 'gh pr create'.
-    Do NOT stop until the PR URL is displayed.
+    Check your task backlog. If backlog is EMPTY, report 'No tasks in backlog for {lane}'
+    and STOP - do NOT explore or look for other work.
+    If tasks exist, claim ONE task and work on it.
+    When finished, create a git branch, commit, push, and create a Pull Request.
   nudge: |
     You have {backlog_count} task(s) in your backlog for lane '{lane}'.
-    If you have uncommitted changes from a previous task, create a PR NOW using
-    'gh pr create' before starting anything new.
+    If you have uncommitted changes from a previous task, create a PR first.
     Claim ONE task and work on it.
-    REMINDER: When done, create a branch, commit, push, and run 'gh pr create'.
+    When done, create a branch, commit, push, and create a Pull Request.
 EOF
       issues_fixed=$((issues_fixed + 1))
       log_ok "Added messages section to .hive.yaml"
