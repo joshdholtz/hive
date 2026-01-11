@@ -1,0 +1,22 @@
+architect:
+  backend: claude
+
+workers:
+  backend: claude
+
+session: hive-example
+
+tasks:
+  source: yaml
+  file: .hive/tasks.yaml
+
+windows:
+  - name: demo
+    layout: even-horizontal
+    workers:
+      - id: worker-1
+        dir: .
+        lane: default
+      - id: worker-2
+        dir: .
+        lane: docs
