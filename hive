@@ -891,12 +891,25 @@ cmd_init() {
   fi
 
   # Step 1: Backends (architect and workers can differ)
-  echo "The architect plans work but does NOT edit code."
-  echo "Workers execute tasks and write code."
+  echo "┌─────────────────────────────────────────────────────────┐"
+  echo "│  ARCHITECT vs WORKERS                                   │"
+  echo "├─────────────────────────────────────────────────────────┤"
+  echo "│  ARCHITECT                                              │"
+  echo "│    • Plans and coordinates work                         │"
+  echo "│    • Researches codebase before proposing tasks         │"
+  echo "│    • Adds tasks to the backlog for workers              │"
+  echo "│    • Does NOT edit code or make commits                 │"
+  echo "│    • Claude recommended for stronger reasoning          │"
+  echo "│                                                         │"
+  echo "│  WORKERS                                                │"
+  echo "│    • Execute tasks from their lane's backlog            │"
+  echo "│    • Write code and push PRs                            │"
+  echo "│    • Handle one task at a time                          │"
+  echo "└─────────────────────────────────────────────────────────┘"
   echo ""
 
   local arch_backend
-  arch_backend=$(prompt_choose "Architect backend:" "claude (recommended for planning)" "codex")
+  arch_backend=$(prompt_choose "Architect backend:" "claude (recommended)" "codex")
   # Strip the description suffix
   [[ "$arch_backend" == *"claude"* ]] && arch_backend="claude"
   [[ "$arch_backend" == *"codex"* ]] && arch_backend="codex"
