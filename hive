@@ -386,12 +386,13 @@ EOF
 }
 
 # Get task counts for a lane
-# Sets backlog_count and in_progress_count variables
+# Outputs: "backlog_count in_progress_count" (space-separated)
+# Usage: read backlog in_progress <<< "$(get_task_counts "$config" "$lane")"
 get_task_counts() {
   local config="$1"
   local lane="$2"
-  local -n _backlog_ref="$3"
-  local -n _in_progress_ref="$4"
+  local backlog_count=0
+  local in_progress_count=0
 
   local task_source
   task_source=$(yq -r '.tasks.source // "yaml"' "$config")
@@ -406,7 +407,7 @@ get_task_counts() {
 
     # Parse cached items for this lane
     # Count items where Lane == lane AND Status == Backlog
-    _backlog_ref=$(echo "$_GH_ITEMS_CACHE" | jq --arg lane "$lane" '
+    backlog_count=$(echo "$_GH_ITEMS_CACHE" | jq --arg lane "$lane" '
       [.data.node.items.nodes[] |
         select(.fieldValues.nodes[] |
           select(.field.name == "Lane" and .name == $lane)) |
@@ -415,7 +416,7 @@ get_task_counts() {
       ] | length
     ' 2>/dev/null || echo 0)
 
-    _in_progress_ref=$(echo "$_GH_ITEMS_CACHE" | jq --arg lane "$lane" '
+    in_progress_count=$(echo "$_GH_ITEMS_CACHE" | jq --arg lane "$lane" '
       [.data.node.items.nodes[] |
         select(.fieldValues.nodes[] |
           select(.field.name == "Lane" and .name == $lane)) |
@@ -430,20 +431,17 @@ get_task_counts() {
     tasks_file=$(yq -r '.tasks.file // "./tasks.yaml"' "$config")
     tasks_file="$project_dir/$tasks_file"
 
-    if [[ ! -f "$tasks_file" ]]; then
-      _backlog_ref=0
-      _in_progress_ref=0
-      return
+    if [[ -f "$tasks_file" ]]; then
+      backlog_count=$(yq -r ".\"$lane\".backlog | length // 0" "$tasks_file" 2>/dev/null || echo 0)
+      in_progress_count=$(yq -r ".\"$lane\".in_progress | length // 0" "$tasks_file" 2>/dev/null || echo 0)
+
+      # Handle null values
+      [[ "$backlog_count" == "null" ]] && backlog_count=0
+      [[ "$in_progress_count" == "null" ]] && in_progress_count=0
     fi
-
-    # Try different YAML structures
-    _backlog_ref=$(yq -r ".\"$lane\".backlog | length // 0" "$tasks_file" 2>/dev/null || echo 0)
-    _in_progress_ref=$(yq -r ".\"$lane\".in_progress | length // 0" "$tasks_file" 2>/dev/null || echo 0)
-
-    # Handle null values
-    [[ "$_backlog_ref" == "null" ]] && _backlog_ref=0
-    [[ "$_in_progress_ref" == "null" ]] && _in_progress_ref=0
   fi
+
+  echo "$backlog_count $in_progress_count"
 }
 
 #------------------------------------------------------------------------------
@@ -679,8 +677,8 @@ cmd_nudge() {
     [[ -n "$specific_worker" && "$id" != "$specific_worker" ]] && continue
 
     # Get task counts
-    local backlog_count=0 in_progress_count=0
-    get_task_counts "$config" "$lane" backlog_count in_progress_count
+    local backlog_count in_progress_count
+    read backlog_count in_progress_count <<< "$(get_task_counts "$config" "$lane")"
 
     # Only nudge if has backlog and not busy
     if [[ "$backlog_count" -gt 0 && "$in_progress_count" -eq 0 ]]; then
@@ -742,8 +740,8 @@ cmd_status() {
   while IFS='|' read -r id window pane lane dir branch_local branch_remote; do
     [[ -z "$id" ]] && continue
 
-    local backlog_count=0 in_progress_count=0
-    get_task_counts "$config" "$lane" backlog_count in_progress_count
+    local backlog_count in_progress_count
+    read backlog_count in_progress_count <<< "$(get_task_counts "$config" "$lane")"
 
     printf "%-20s %-15s %-10s %-12s\n" "$id" "$lane" "$backlog_count" "$in_progress_count"
   done < <(build_worker_list "$config")
