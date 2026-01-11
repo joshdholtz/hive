@@ -545,10 +545,11 @@ EOF
 
       # Compute relative path from worker dir back to project root's .hive/
       local hive_path=".hive"
-      if [[ "$worker_dir" != "." ]]; then
-        # Count path segments and prepend ../
+      if [[ "$worker_dir" != "." && "$worker_dir" != "./" ]]; then
+        # Strip leading ./ and count path segments
+        local clean_dir="${worker_dir#./}"
         local depth
-        depth=$(echo "$worker_dir" | tr -cd '/' | wc -c)
+        depth=$(echo "$clean_dir" | tr -cd '/' | wc -c)
         depth=$((depth + 1))
         hive_path=""
         for ((i=0; i<depth; i++)); do hive_path="../$hive_path"; done
@@ -630,9 +631,11 @@ EOF
 
       # Compute relative path from worker dir back to project root's .hive/
       local hive_path=".hive"
-      if [[ "$worker_dir" != "." ]]; then
+      if [[ "$worker_dir" != "." && "$worker_dir" != "./" ]]; then
+        # Strip leading ./ and count path segments
+        local clean_dir="${worker_dir#./}"
         local depth
-        depth=$(echo "$worker_dir" | tr -cd '/' | wc -c)
+        depth=$(echo "$clean_dir" | tr -cd '/' | wc -c)
         depth=$((depth + 1))
         hive_path=""
         for ((i=0; i<depth; i++)); do hive_path="../$hive_path"; done
