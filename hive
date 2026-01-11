@@ -47,6 +47,44 @@ yaml_escape() {
   echo "$str"
 }
 
+# Ensure hive files are in .git/info/exclude (silent, idempotent)
+ensure_git_exclude() {
+  local project_dir="$1"
+  local config="$2"
+
+  # Handle both regular repos (.git is dir) and worktrees (.git is file)
+  [[ ! -e "$project_dir/.git" ]] && return 0
+
+  local exclude_file="$project_dir/.git/info/exclude"
+
+  # For worktrees, .git is a file - resolve to actual git dir
+  if [[ -f "$project_dir/.git" ]]; then
+    local git_dir
+    git_dir=$(cat "$project_dir/.git" | sed 's/^gitdir: //')
+    # Go up from worktrees/<name> to main .git
+    exclude_file="$(dirname "$(dirname "$git_dir")")/info/exclude"
+  fi
+
+  # Already set up?
+  grep -q "# Hive" "$exclude_file" 2>/dev/null && return 0
+
+  # Get tasks file from config
+  local tasks_file
+  tasks_file=$(yq -r '.tasks.file // "./hive_tasks.yaml"' "$config" 2>/dev/null)
+  tasks_file=$(basename "${tasks_file:-hive_tasks.yaml}")
+
+  mkdir -p "$(dirname "$exclude_file")"
+  {
+    echo ""
+    echo "# Hive - AI worker orchestration"
+    echo "HIVE_ARCHITECT.md"
+    echo "ARCHITECT.md"
+    echo "**/HIVE_WORKER.md"
+    echo "**/WORKER.md"
+    echo "$tasks_file"
+  } >> "$exclude_file"
+}
+
 # Check if gum is available for fancy prompts
 has_gum() { command -v gum &>/dev/null; }
 
@@ -645,6 +683,10 @@ cmd_up() {
   # Run setup commands if configured
   local project_dir
   project_dir=$(get_project_dir "$config")
+
+  # Ensure hive files are gitignored
+  ensure_git_exclude "$project_dir" "$config"
+
   local num_setup_cmds
   num_setup_cmds=$(yq -r '.setup | length // 0' "$config")
 
@@ -1350,22 +1392,8 @@ EOF
   fi
 
   # Set up .git/info/exclude so hive files aren't tracked
-  local exclude_file=".git/info/exclude"
-  if [[ -d ".git" ]]; then
-    mkdir -p "$(dirname "$exclude_file")"
-    if ! grep -q "# Hive" "$exclude_file" 2>/dev/null; then
-      echo "" >> "$exclude_file"
-      echo "# Hive - AI worker orchestration" >> "$exclude_file"
-      echo "HIVE_ARCHITECT.md" >> "$exclude_file"
-      echo "ARCHITECT.md" >> "$exclude_file"
-      echo "**/HIVE_WORKER.md" >> "$exclude_file"
-      echo "**/WORKER.md" >> "$exclude_file"
-      local tf_basename
-      tf_basename=$(basename "${tasks_file:-hive_tasks.yaml}")
-      echo "$tf_basename" >> "$exclude_file"
-      log_ok "Added hive files to .git/info/exclude"
-    fi
-  fi
+  ensure_git_exclude "$PWD" ".hive.yaml"
+  log_ok "Added hive files to .git/info/exclude"
 
   echo ""
 
