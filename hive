@@ -520,7 +520,7 @@ EOF
 
       # Build agent command
       local agent_cmd initial_msg
-      initial_msg="Read CLAUDE_ROLE.md if it exists. You are assigned to lane '$worker_lane'. Check your task backlog, claim ONE task, and work on it. Push a PR when done."
+      initial_msg="Read WORKER_ROLE.md if it exists. You are assigned to lane '$worker_lane'. Check your task backlog, claim ONE task, and work on it. Push a PR when done."
 
       if [[ "$workers_backend" == "codex" ]]; then
         agent_cmd="env -u CODEX_SANDBOX -u CODEX_SANDBOX_NETWORK_DISABLED codex --sandbox danger-full-access --ask-for-approval \"never\" \"$initial_msg\""
@@ -569,7 +569,7 @@ COMMANDS:
     nudge [worker]    Nudge idle workers (or specific one)
     status            Show worker status and task counts
     watch             Run watcher loop (internal, run by 'up')
-    role [worker]     Generate CLAUDE_ROLE.md for worker(s)
+    role [worker]     Generate WORKER_ROLE.md for worker(s)
     doctor            Check and fix common issues
     help              Show this help
 
@@ -1276,7 +1276,7 @@ EOF
 
   # Offer to generate role files
   if [[ ${#workers[@]} -gt 0 ]]; then
-    if prompt_confirm "Generate CLAUDE_ROLE.md files for workers?" "y"; then
+    if prompt_confirm "Generate WORKER_ROLE.md files for workers?" "y"; then
       cmd_role
     fi
   fi
@@ -1331,15 +1331,15 @@ cmd_deinit() {
     files_to_remove+=("$tasks_file")
   fi
 
-  # Find CLAUDE_ROLE.md files and detect worktrees
+  # Find WORKER_ROLE.md files and detect worktrees
   while IFS='|' read -r id window pane lane dir branch_local branch_remote; do
     [[ -z "$id" ]] && continue
 
     local abs_dir="$project_dir/$dir"
 
-    # Check for CLAUDE_ROLE.md
-    if [[ -f "$abs_dir/CLAUDE_ROLE.md" ]]; then
-      files_to_remove+=("$abs_dir/CLAUDE_ROLE.md")
+    # Check for WORKER_ROLE.md
+    if [[ -f "$abs_dir/WORKER_ROLE.md" ]]; then
+      files_to_remove+=("$abs_dir/WORKER_ROLE.md")
     fi
 
     # Check if this is a git worktree (has .git file, not directory)
@@ -1422,7 +1422,7 @@ cmd_role() {
     [[ -n "$specific_worker" && "$id" != "$specific_worker" ]] && continue
 
     local abs_dir="$project_dir/$dir"
-    local role_file="$abs_dir/CLAUDE_ROLE.md"
+    local role_file="$abs_dir/WORKER_ROLE.md"
 
     # Check if custom content exists
     local custom_content=""
@@ -1473,9 +1473,26 @@ EOF
     else
       local tasks_file
       tasks_file=$(yq -r '.tasks.file // "./tasks.yaml"' "$config")
+
+      # Compute relative path from worker dir to tasks file
+      # Count depth of worker dir and prepend ../
+      local worker_rel_tasks="$tasks_file"
+      if [[ "$dir" != "." && "$dir" != "./" ]]; then
+        local depth
+        depth=$(echo "$dir" | tr -cd '/' | wc -c | tr -d ' ')
+        # Add 1 if dir doesn't end with / but has content
+        [[ "$dir" != */ && -n "$dir" ]] && depth=$((depth + 1))
+        local prefix=""
+        for ((i=0; i<depth; i++)); do
+          prefix="../$prefix"
+        done
+        # Strip leading ./ from tasks_file if present
+        worker_rel_tasks="${prefix}${tasks_file#./}"
+      fi
+
       cat >> "$role_file" <<EOF
 ## Task Source
-Tasks are managed in \`$tasks_file\`.
+Tasks are managed in \`$worker_rel_tasks\` (relative to your working directory).
 - Your lane: \`$lane\`
 - Check the \`backlog\` section for pending tasks
 - Move tasks to \`in_progress\` when you start
@@ -1725,17 +1742,17 @@ cmd_doctor() {
     log_ok "Found: ARCHITECT_ROLE.md"
   fi
 
-  # Check 3: CLAUDE_ROLE.md for each worker
+  # Check 3: WORKER_ROLE.md for each worker
   while IFS='|' read -r id window pane lane dir branch_local branch_remote; do
     [[ -z "$id" ]] && continue
     local worker_dir="$project_dir/$dir"
-    local role_file="$worker_dir/CLAUDE_ROLE.md"
+    local role_file="$worker_dir/WORKER_ROLE.md"
 
     if [[ ! -f "$role_file" ]]; then
-      log_warn "Missing: $dir/CLAUDE_ROLE.md"
+      log_warn "Missing: $dir/WORKER_ROLE.md"
       issues_found=$((issues_found + 1))
     else
-      log_ok "Found: $dir/CLAUDE_ROLE.md"
+      log_ok "Found: $dir/WORKER_ROLE.md"
     fi
   done < <(build_worker_list "$config")
 

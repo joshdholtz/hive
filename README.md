@@ -99,7 +99,7 @@ The `hive init` wizard will guide you through:
 | `hive stop` | Stop the tmux session |
 | `hive status` | Show worker status and task counts |
 | `hive nudge [worker]` | Nudge idle workers to check for tasks |
-| `hive role [worker]` | Regenerate ARCHITECT_ROLE.md and CLAUDE_ROLE.md files |
+| `hive role [worker]` | Regenerate ARCHITECT_ROLE.md and WORKER_ROLE.md files |
 | `hive doctor` | Check and fix common issues (missing files, etc.) |
 
 ---
