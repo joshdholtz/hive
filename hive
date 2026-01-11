@@ -1357,7 +1357,9 @@ EOF
       echo "" >> "$exclude_file"
       echo "# Hive - AI worker orchestration" >> "$exclude_file"
       echo "HIVE_ARCHITECT.md" >> "$exclude_file"
+      echo "ARCHITECT.md" >> "$exclude_file"
       echo "**/HIVE_WORKER.md" >> "$exclude_file"
+      echo "**/WORKER.md" >> "$exclude_file"
       local tf_basename
       tf_basename=$(basename "${tasks_file:-hive_tasks.yaml}")
       echo "$tf_basename" >> "$exclude_file"
@@ -1911,7 +1913,7 @@ cmd_doctor() {
 
   # Check for hive files that should be ignored
   # Use **/ prefix to match in any subdirectory
-  local ignore_patterns=("HIVE_ARCHITECT.md" "**/HIVE_WORKER.md" "$tasks_file")
+  local ignore_patterns=("HIVE_ARCHITECT.md" "ARCHITECT.md" "**/HIVE_WORKER.md" "**/WORKER.md" "$tasks_file")
 
   for pattern in "${ignore_patterns[@]}"; do
     if [[ -f "$exclude_file" ]]; then
