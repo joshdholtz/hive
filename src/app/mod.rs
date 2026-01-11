@@ -1,13 +1,13 @@
 pub mod palette;
+pub mod sidebar;
 pub mod state;
 pub mod types;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::config::Backend;
-use crate::app::types::PaneType;
 use crate::tasks::TaskCounts;
-use state::{App, LayoutMode};
+use state::App;
 
 pub const DEFAULT_STARTUP_MSG: &str = "Read .hive/workers/{lane}/WORKER.md if it exists. You are assigned to lane '{lane}'. Check your task backlog. If backlog is EMPTY, report 'No tasks in backlog for {lane}' and STOP - do NOT explore or look for other work. If tasks exist, claim ONE task and work on it. When finished, create a git branch, commit, push, and create a Pull Request.";
 
@@ -82,22 +82,12 @@ pub fn layout_visible_panes(app: &App) -> Vec<usize> {
         return vec![app.focused_pane];
     }
 
-    match app.layout_mode {
-        LayoutMode::Default => app
-            .panes
-            .iter()
-            .enumerate()
-            .filter(|(_, pane)| matches!(pane.pane_type, PaneType::Architect | PaneType::Worker { .. }))
-            .map(|(idx, _)| idx)
-            .collect(),
-        LayoutMode::Custom => {
-            if let Some(window) = app.windows.get(app.focused_window) {
-                window.pane_indices.clone()
-            } else {
-                Vec::new()
-            }
-        }
-    }
+    app.panes
+        .iter()
+        .enumerate()
+        .filter(|(_, pane)| pane.visible)
+        .map(|(idx, _)| idx)
+        .collect()
 }
 
 pub fn backend_label(backend: Backend) -> &'static str {

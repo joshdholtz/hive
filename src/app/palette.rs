@@ -12,9 +12,9 @@ pub enum PaletteAction {
     FocusNext,
     FocusPrev,
     FocusPane(usize),
-    FocusWindow(usize),
-    ToggleLayout,
     ToggleZoom,
+    ToggleSidebar,
+    FocusSidebar,
     NudgeAll,
     NudgeFocused,
     ToggleHelp,
@@ -32,8 +32,12 @@ pub fn build_items(app: &App) -> Vec<PaletteItem> {
             action: PaletteAction::FocusPrev,
         },
         PaletteItem {
-            label: "Toggle layout".to_string(),
-            action: PaletteAction::ToggleLayout,
+            label: "Toggle sidebar".to_string(),
+            action: PaletteAction::ToggleSidebar,
+        },
+        PaletteItem {
+            label: "Focus sidebar".to_string(),
+            action: PaletteAction::FocusSidebar,
         },
         PaletteItem {
             label: "Toggle zoom".to_string(),
@@ -56,13 +60,6 @@ pub fn build_items(app: &App) -> Vec<PaletteItem> {
             action: PaletteAction::Quit,
         },
     ];
-
-    for (idx, window) in app.windows.iter().enumerate() {
-        items.push(PaletteItem {
-            label: format!("Focus window: {}", window.name),
-            action: PaletteAction::FocusWindow(idx),
-        });
-    }
 
     for (idx, pane) in app.panes.iter().enumerate() {
         let title = match &pane.pane_type {

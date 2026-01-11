@@ -13,6 +13,8 @@ pub struct PaneInfo {
     pub pane_type: PaneType,
     pub lane: Option<String>,
     pub branch: Option<BranchConfig>,
+    pub group: Option<String>,
+    pub visible: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,6 +26,7 @@ pub struct WindowInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppState {
+    pub project_name: String,
     pub backend: Backend,
     pub layout_mode: LayoutMode,
     pub panes: Vec<PaneInfo>,
@@ -43,6 +46,7 @@ pub enum ClientMessage {
     Input { pane_id: String, data: Vec<u8> },
     Resize { panes: Vec<PaneSize> },
     Nudge { worker: Option<String> },
+    SetVisibility { pane_id: String, visible: bool },
     Layout { mode: LayoutMode },
     Detach,
 }

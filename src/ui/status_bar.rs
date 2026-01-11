@@ -1,19 +1,20 @@
 use ratatui::prelude::*;
 use ratatui::widgets::Paragraph;
 
-use crate::app::{backend_label, layout_visible_panes};
+use crate::app::backend_label;
 use crate::app::state::App;
 use crate::app::types::PaneType;
 
 pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
     let mut parts = Vec::new();
 
-    let worker_count = app
+    let total_panes = app
         .panes
         .iter()
-        .filter(|p| matches!(p.pane_type, PaneType::Worker { .. }))
+        .filter(|p| matches!(p.pane_type, PaneType::Architect | PaneType::Worker { .. }))
         .count();
-    parts.push(format!("{} workers", worker_count));
+    let visible_panes = app.panes.iter().filter(|p| p.visible).count();
+    parts.push(format!("{}/{} visible", visible_panes, total_panes));
 
     for (lane, counts) in &app.task_counts {
         if counts.backlog > 0 {
@@ -24,11 +25,10 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
     let backend = backend_label(app.backend);
     parts.push(format!("backend: {}", backend));
 
-    let visible = layout_visible_panes(app);
-    parts.push(format!("view: {} panes", visible.len()));
-
     let mode = if app.show_palette {
         "PALETTE"
+    } else if app.sidebar.focused {
+        "SIDEBAR"
     } else if app.nav_mode {
         "NAV"
     } else {

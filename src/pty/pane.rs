@@ -21,6 +21,8 @@ pub struct Pane {
     pub lane: Option<String>,
     pub working_dir: PathBuf,
     pub branch: Option<BranchConfig>,
+    pub group: Option<String>,
+    pub visible: bool,
 }
 
 impl Pane {

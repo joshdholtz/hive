@@ -1,98 +1,94 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
-use crate::app::state::{App, LayoutKind, LayoutMode};
-use crate::app::types::PaneType;
+use crate::app::state::App;
 
 pub fn calculate_layout(app: &App, area: Rect) -> Vec<(usize, Rect)> {
     if app.zoomed {
         return vec![(app.focused_pane, area)];
     }
 
-    match app.layout_mode {
-        LayoutMode::Default => calculate_default_layout(app, area),
-        LayoutMode::Custom => calculate_custom_layout(app, area),
-    }
-}
-
-fn calculate_default_layout(app: &App, area: Rect) -> Vec<(usize, Rect)> {
-    let mut result = Vec::new();
-
-    let architect_idx = app
-        .panes
-        .iter()
-        .position(|p| matches!(p.pane_type, PaneType::Architect));
-
-    let worker_indices: Vec<usize> = app
+    let visible: Vec<usize> = app
         .panes
         .iter()
         .enumerate()
-        .filter(|(_, p)| matches!(p.pane_type, PaneType::Worker { .. }))
-        .map(|(i, _)| i)
+        .filter(|(_, pane)| pane.visible)
+        .map(|(idx, _)| idx)
         .collect();
 
-    if architect_idx.is_none() {
-        return stack_vertical(area, &worker_indices);
+    match visible.len() {
+        0 => Vec::new(),
+        1 => vec![(visible[0], area)],
+        2 => {
+            let chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(area);
+            vec![(visible[0], chunks[0]), (visible[1], chunks[1])]
+        }
+        3 => {
+            let cols = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(area);
+            let right = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(cols[1]);
+            vec![
+                (visible[0], cols[0]),
+                (visible[1], right[0]),
+                (visible[2], right[1]),
+            ]
+        }
+        4 => {
+            let rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(area);
+            let top = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(rows[0]);
+            let bottom = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(rows[1]);
+            vec![
+                (visible[0], top[0]),
+                (visible[1], top[1]),
+                (visible[2], bottom[0]),
+                (visible[3], bottom[1]),
+            ]
+        }
+        count => {
+            let rows_count = (count + 1) / 2;
+            let row_constraints =
+                vec![Constraint::Ratio(1, rows_count as u32); rows_count];
+            let rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints(row_constraints)
+                .split(area);
+            let mut rects = Vec::new();
+            for (row_idx, row) in rows.iter().enumerate() {
+                let items_in_row = if row_idx == rows_count - 1 && count % 2 == 1 {
+                    1
+                } else {
+                    2
+                };
+                let col_constraints =
+                    vec![Constraint::Ratio(1, items_in_row as u32); items_in_row];
+                let cols = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints(col_constraints)
+                    .split(*row);
+                for (col_idx, rect) in cols.iter().enumerate() {
+                    let pane_idx = row_idx * 2 + col_idx;
+                    if let Some(id) = visible.get(pane_idx) {
+                        rects.push((*id, *rect));
+                    }
+                }
+            }
+            rects
+        }
     }
-
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(area);
-
-    if let Some(idx) = architect_idx {
-        result.push((idx, chunks[0]));
-    }
-
-    let worker_layout = stack_vertical(chunks[1], &worker_indices);
-    result.extend(worker_layout);
-
-    result
-}
-
-fn calculate_custom_layout(app: &App, area: Rect) -> Vec<(usize, Rect)> {
-    let Some(window) = app.windows.get(app.focused_window) else {
-        return Vec::new();
-    };
-
-    let pane_indices = &window.pane_indices;
-    match window.layout {
-        LayoutKind::EvenHorizontal => stack_horizontal(area, pane_indices),
-        LayoutKind::EvenVertical => stack_vertical(area, pane_indices),
-    }
-}
-
-fn stack_vertical(area: Rect, pane_indices: &[usize]) -> Vec<(usize, Rect)> {
-    if pane_indices.is_empty() {
-        return Vec::new();
-    }
-
-    let constraints = vec![Constraint::Ratio(1, pane_indices.len() as u32); pane_indices.len()];
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(constraints)
-        .split(area);
-
-    pane_indices
-        .iter()
-        .enumerate()
-        .map(|(idx, pane_id)| (*pane_id, chunks[idx]))
-        .collect()
-}
-
-fn stack_horizontal(area: Rect, pane_indices: &[usize]) -> Vec<(usize, Rect)> {
-    if pane_indices.is_empty() {
-        return Vec::new();
-    }
-
-    let constraints = vec![Constraint::Ratio(1, pane_indices.len() as u32); pane_indices.len()];
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints(constraints)
-        .split(area);
-
-    pane_indices
-        .iter()
-        .enumerate()
-        .map(|(idx, pane_id)| (*pane_id, chunks[idx]))
-        .collect()
 }

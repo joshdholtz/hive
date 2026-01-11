@@ -2,8 +2,9 @@ pub mod help;
 pub mod layout;
 pub mod palette;
 pub mod pane;
+pub mod sidebar;
 pub mod status_bar;
-pub mod tab_bar;
+pub mod title_bar;
 
 use ratatui::prelude::*;
 
@@ -19,8 +20,8 @@ pub fn render(frame: &mut Frame, app: &App) {
         ])
         .split(frame.area());
 
-    tab_bar::render_tab_bar(frame, chunks[0], app);
-    render_panes(frame, chunks[1], app);
+    title_bar::render_title_bar(frame, chunks[0], app);
+    render_body(frame, chunks[1], app);
     status_bar::render_status_bar(frame, chunks[2], app);
 
     if app.show_help {
@@ -32,10 +33,30 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 }
 
+fn render_body(frame: &mut Frame, area: Rect, app: &App) {
+    if app.sidebar.visible {
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Length(24), Constraint::Min(0)])
+            .split(area);
+        sidebar::render_sidebar(frame, chunks[0], app);
+        render_panes(frame, chunks[1], app);
+    } else {
+        render_panes(frame, area, app);
+    }
+}
+
 fn render_panes(frame: &mut Frame, area: Rect, app: &App) {
     let layout = layout::calculate_layout(app, area);
     for (idx, rect) in layout {
-        let focused = idx == app.focused_pane;
-        pane::render_pane(frame, rect, &app.panes[idx], focused, app.nav_mode);
+        let focused = idx == app.focused_pane && !app.sidebar.focused;
+        pane::render_pane(
+            frame,
+            rect,
+            &app.panes[idx],
+            focused,
+            app.nav_mode,
+            app.sidebar.focused,
+        );
     }
 }

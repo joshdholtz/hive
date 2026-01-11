@@ -301,6 +301,12 @@ fn handle_client_message(
             let _ = nudge_workers(state, worker.as_deref());
             broadcast_state(state, clients);
         }
+        ClientMessage::SetVisibility { pane_id, visible } => {
+            if let Some(pane) = state.panes.iter_mut().find(|p| p.id == pane_id) {
+                pane.visible = visible;
+                broadcast_state(state, clients);
+            }
+        }
         ClientMessage::Layout { mode } => {
             state.layout_mode = mode;
             let _ = write_layout_mode(&state.project_dir, mode);
@@ -324,6 +330,7 @@ fn resize_pane(state: &mut ServerState, pane: PaneSize) {
 fn spawn_panes(config: &HiveConfig, project_dir: &Path) -> Result<(Vec<Pane>, Vec<AppWindow>)> {
     let mut panes = Vec::new();
     let mut windows = Vec::new();
+    let group_counts = build_group_counts(config, project_dir);
 
     let (arch_master, arch_child, arch_writer) =
         spawn_agent(config.architect.backend, ARCHITECT_MESSAGE, project_dir)?;
@@ -340,6 +347,8 @@ fn spawn_panes(config: &HiveConfig, project_dir: &Path) -> Result<(Vec<Pane>, Ve
         lane: None,
         working_dir: project_dir.to_path_buf(),
         branch: None,
+        group: None,
+        visible: true,
     });
 
     let architect_idx = 0;
@@ -356,6 +365,7 @@ fn spawn_panes(config: &HiveConfig, project_dir: &Path) -> Result<(Vec<Pane>, Ve
             let dir = worker.dir.clone().unwrap_or_else(|| ".".to_string());
             let working_dir = project_dir.join(dir);
             let startup_message = build_startup_message(config, &lane);
+            let group = group_for_dir(&working_dir, project_dir, &group_counts);
 
             let (master, child, writer) =
                 spawn_agent(config.workers.backend, &startup_message, &working_dir)?;
@@ -372,6 +382,8 @@ fn spawn_panes(config: &HiveConfig, project_dir: &Path) -> Result<(Vec<Pane>, Ve
                 lane: Some(lane),
                 working_dir,
                 branch: worker.branch.clone(),
+                group,
+                visible: true,
             };
 
             panes.push(pane);
@@ -386,6 +398,44 @@ fn spawn_panes(config: &HiveConfig, project_dir: &Path) -> Result<(Vec<Pane>, Ve
     }
 
     Ok((panes, windows))
+}
+
+fn build_group_counts(config: &HiveConfig, project_dir: &Path) -> HashMap<String, usize> {
+    let mut counts = HashMap::new();
+    for window in &config.windows {
+        for worker in &window.workers {
+            let dir = worker.dir.clone().unwrap_or_else(|| ".".to_string());
+            let working_dir = project_dir.join(dir);
+            if let Some(group) = group_name_for_dir(&working_dir, project_dir) {
+                *counts.entry(group).or_insert(0) += 1;
+            }
+        }
+    }
+    counts
+}
+
+fn group_for_dir(
+    working_dir: &Path,
+    project_dir: &Path,
+    group_counts: &HashMap<String, usize>,
+) -> Option<String> {
+    let name = group_name_for_dir(working_dir, project_dir)?;
+    if group_counts.get(&name).copied().unwrap_or(0) > 1 {
+        Some(name)
+    } else {
+        None
+    }
+}
+
+fn group_name_for_dir(working_dir: &Path, project_dir: &Path) -> Option<String> {
+    let rel = working_dir.strip_prefix(project_dir).ok()?;
+    let parent = rel.parent()?;
+    let name = parent.file_name()?.to_string_lossy().to_string();
+    if name == "." || name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
 }
 
 fn nudge_workers(state: &mut ServerState, specific_worker: Option<&str>) -> Result<Vec<String>> {
@@ -445,7 +495,15 @@ fn broadcast(clients: &mut Vec<ClientHandle>, message: ServerMessage) {
 }
 
 fn build_state(state: &ServerState) -> AppState {
+    let project_name = state
+        .project_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("hive")
+        .to_string();
+
     AppState {
+        project_name,
         backend: state.config.workers.backend,
         layout_mode: state.layout_mode,
         panes: state
@@ -456,6 +514,8 @@ fn build_state(state: &ServerState) -> AppState {
                 pane_type: pane.pane_type.clone(),
                 lane: pane.lane.clone(),
                 branch: pane.branch.clone(),
+                group: pane.group.clone(),
+                visible: pane.visible,
             })
             .collect(),
         windows: state

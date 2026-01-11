@@ -11,6 +11,7 @@ use crossterm::{
     execute,
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::{backend::CrosstermBackend, Terminal};
 
 use crate::app::{key_to_bytes, layout_visible_panes};
@@ -144,8 +145,20 @@ fn run_tui(
 
         if !app.panes.is_empty() {
             let area = terminal.size()?;
-            let rect = ratatui::layout::Rect::new(0, 0, area.width, area.height);
-            let layout = crate::ui::layout::calculate_layout(app, rect);
+            let rect = Rect::new(0, 0, area.width, area.height);
+            let body = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(1), Constraint::Min(0), Constraint::Length(1)])
+                .split(rect)[1];
+            let pane_area = if app.sidebar.visible {
+                Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Length(24), Constraint::Min(0)])
+                    .split(body)[1]
+            } else {
+                body
+            };
+            let layout = crate::ui::layout::calculate_layout(app, pane_area);
             let sizes: Vec<PaneSize> = layout
                 .iter()
                 .map(|(idx, rect)| PaneSize {
@@ -222,6 +235,13 @@ fn run_tui(
 }
 
 fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent) -> Result<bool> {
+    if app.show_help {
+        if matches!(key.code, KeyCode::Esc | KeyCode::Char('?')) {
+            app.show_help = false;
+        }
+        return Ok(false);
+    }
+
     let visible = layout_visible_panes(app);
 
     if app.show_palette {
@@ -254,20 +274,22 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent) -> Resu
                         match item.action.clone() {
                             crate::app::palette::PaletteAction::FocusNext => app.focus_next(&visible),
                             crate::app::palette::PaletteAction::FocusPrev => app.focus_prev(&visible),
-                            crate::app::palette::PaletteAction::FocusPane(idx) => app.focused_pane = idx,
-                            crate::app::palette::PaletteAction::FocusWindow(idx) => {
-                                app.focused_window = idx;
-                                if let Some(window) = app.windows.get(idx) {
-                                    if let Some(first) = window.pane_indices.first() {
-                                        app.focused_pane = *first;
-                                    }
-                                }
-                            }
-                            crate::app::palette::PaletteAction::ToggleLayout => {
-                                app.toggle_layout();
-                                conn.send(ClientMessage::Layout { mode: app.layout_mode })?;
+                            crate::app::palette::PaletteAction::FocusPane(idx) => {
+                                app.focused_pane = idx
                             }
                             crate::app::palette::PaletteAction::ToggleZoom => app.toggle_zoom(),
+                            crate::app::palette::PaletteAction::ToggleSidebar => {
+                                app.sidebar.visible = !app.sidebar.visible;
+                                if !app.sidebar.visible {
+                                    app.sidebar.focused = false;
+                                }
+                            }
+                            crate::app::palette::PaletteAction::FocusSidebar => {
+                                if app.sidebar.visible {
+                                    app.sidebar.focused = true;
+                                    app.nav_mode = false;
+                                }
+                            }
                             crate::app::palette::PaletteAction::NudgeAll => {
                                 conn.send(ClientMessage::Nudge { worker: None })?;
                             }
@@ -299,17 +321,80 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent) -> Resu
         return Ok(false);
     }
 
+    if app.sidebar.focused && app.sidebar.visible {
+        match key.code {
+            KeyCode::Esc => {
+                app.sidebar.focused = false;
+            }
+            KeyCode::Tab => {
+                app.sidebar.focused = false;
+            }
+            KeyCode::Up | KeyCode::Char('k') => app.sidebar.move_up(&app.panes),
+            KeyCode::Down | KeyCode::Char('j') => app.sidebar.move_down(&app.panes),
+            KeyCode::Char(' ') => {
+                let changes = app.sidebar.toggle_selected(&mut app.panes);
+                for (pane_id, visible) in changes {
+                    conn.send(ClientMessage::SetVisibility { pane_id, visible })?;
+                }
+                app.ensure_focus_visible();
+            }
+            KeyCode::Enter => {
+                if let Some(pane_id) = app.sidebar.selected_pane_id() {
+                    if let Some(pane) = app.panes.iter_mut().find(|pane| pane.id == pane_id) {
+                        pane.visible = true;
+                        app.focused_pane = app
+                            .panes
+                            .iter()
+                            .position(|pane| pane.id == pane_id)
+                            .unwrap_or(app.focused_pane);
+                        conn.send(ClientMessage::SetVisibility {
+                            pane_id,
+                            visible: true,
+                        })?;
+                    }
+                    app.sidebar.focused = false;
+                } else {
+                    let changes = app.sidebar.toggle_selected(&mut app.panes);
+                    for (pane_id, visible) in changes {
+                        conn.send(ClientMessage::SetVisibility { pane_id, visible })?;
+                    }
+                    app.ensure_focus_visible();
+                }
+            }
+            KeyCode::Left | KeyCode::Char('h') => app.sidebar.collapse_selected(),
+            KeyCode::Right | KeyCode::Char('l') => app.sidebar.expand_selected(),
+            KeyCode::Char('a') => {
+                let changes = app.sidebar.select_all(&mut app.panes);
+                for (pane_id, visible) in changes {
+                    conn.send(ClientMessage::SetVisibility { pane_id, visible })?;
+                }
+                app.ensure_focus_visible();
+            }
+            KeyCode::Char('n') => {
+                let changes = app.sidebar.select_none(&mut app.panes);
+                for (pane_id, visible) in changes {
+                    conn.send(ClientMessage::SetVisibility { pane_id, visible })?;
+                }
+                app.ensure_focus_visible();
+            }
+            _ => {}
+        }
+        return Ok(false);
+    }
+
     if app.nav_mode {
         match key.code {
             KeyCode::Esc => app.nav_mode = false,
-            KeyCode::Tab => app.focus_next(&visible),
-            KeyCode::BackTab => app.focus_prev(&visible),
             KeyCode::Up | KeyCode::Left => app.focus_prev(&visible),
             KeyCode::Down | KeyCode::Right => app.focus_next(&visible),
             KeyCode::Char('h') => app.focus_prev(&visible),
             KeyCode::Char('j') => app.focus_next(&visible),
             KeyCode::Char('k') => app.focus_prev(&visible),
             KeyCode::Char('l') => app.focus_next(&visible),
+            KeyCode::Tab if app.sidebar.visible => {
+                app.sidebar.focused = true;
+                app.nav_mode = false;
+            }
             KeyCode::Char('z') => app.toggle_zoom(),
             KeyCode::Char('?') => app.show_help = !app.show_help,
             KeyCode::Char('n') => {
@@ -322,20 +407,30 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent) -> Resu
                     })?;
                 }
             }
+            KeyCode::Enter => app.nav_mode = false,
             KeyCode::Char('q') => return Ok(true),
             KeyCode::Char('d') => {
                 conn.send(ClientMessage::Detach)?;
                 return Ok(true);
             }
-            KeyCode::Char(c) if c.is_ascii_digit() => {
-                let idx = c.to_digit(10).unwrap() as usize - 1;
-                if idx < app.windows.len() {
-                    app.focused_window = idx;
-                    if let Some(window) = app.windows.get(idx) {
-                        if let Some(first) = window.pane_indices.first() {
-                            app.focused_pane = *first;
-                        }
-                    }
+            KeyCode::PageUp => {
+                if let Some(pane) = app.panes.get_mut(app.focused_pane) {
+                    pane.output_buffer.scroll_up(10);
+                }
+            }
+            KeyCode::PageDown => {
+                if let Some(pane) = app.panes.get_mut(app.focused_pane) {
+                    pane.output_buffer.scroll_down(10);
+                }
+            }
+            KeyCode::Home => {
+                if let Some(pane) = app.panes.get_mut(app.focused_pane) {
+                    pane.output_buffer.scroll_to_top();
+                }
+            }
+            KeyCode::End => {
+                if let Some(pane) = app.panes.get_mut(app.focused_pane) {
+                    pane.output_buffer.scroll_to_bottom();
                 }
             }
             _ => {}
@@ -349,14 +444,6 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent) -> Resu
         app.show_palette = true;
         app.palette_query.clear();
         app.palette_selection = 0;
-    } else if key.code == KeyCode::PageUp {
-        if let Some(pane) = app.panes.get_mut(app.focused_pane) {
-            pane.output_buffer.scroll_up(10);
-        }
-    } else if key.code == KeyCode::PageDown {
-        if let Some(pane) = app.panes.get_mut(app.focused_pane) {
-            pane.output_buffer.scroll_down(10);
-        }
     } else {
         let bytes = key_to_bytes(key);
         if !bytes.is_empty() {
