@@ -711,6 +711,7 @@ COMMANDS:
     watch             Run watcher loop (internal, run by 'up')
     role [worker]     Generate .hive/workers/*/WORKER.md files
     doctor            Check and fix common issues
+    layout [mode]     Switch layout (default/custom) while running
     help              Show this help
 
 EXAMPLES:
@@ -739,12 +740,26 @@ cmd_up() {
   # Check if session already exists
   if tmux has-session -t "$session" 2>/dev/null; then
     log_warn "Session '$session' already running"
-    if prompt_confirm "Kill and restart?"; then
-      tmux kill-session -t "$session"
-    else
-      echo "Use 'hive stop' first, or attach with: tmux attach -t $session"
-      exit 1
-    fi
+    local action
+    action=$(prompt_choose "What would you like to do?" "switch layout" "restart session" "attach only" "cancel")
+    case "$action" in
+      *"switch"*)
+        cmd_layout
+        echo ""
+        echo "Attach with: tmux attach -t $session"
+        exit 0
+        ;;
+      *"restart"*)
+        tmux kill-session -t "$session"
+        ;;
+      *"attach"*)
+        echo "Attach with: tmux attach -t $session"
+        exit 0
+        ;;
+      *)
+        exit 1
+        ;;
+    esac
   fi
 
   # Clear codex env vars if needed
@@ -2075,6 +2090,173 @@ EOF
 }
 
 #------------------------------------------------------------------------------
+# Layout switching
+#------------------------------------------------------------------------------
+
+cmd_layout() {
+  local config
+  config=$(find_config) || { log_error "No .hive.yaml found"; exit 1; }
+
+  local session
+  session=$(yq -r '.session' "$config")
+
+  # Check if session is running
+  if ! tmux has-session -t "$session" 2>/dev/null; then
+    log_error "Session '$session' is not running. Use 'hive up' first."
+    exit 1
+  fi
+
+  local target_layout="${1:-}"
+  if [[ -z "$target_layout" ]]; then
+    target_layout=$(prompt_choose "Switch layout to:" "default (all in one window)" "custom (separate windows)")
+    [[ "$target_layout" == *"default"* ]] && target_layout="default"
+    [[ "$target_layout" == *"custom"* ]] && target_layout="custom"
+  fi
+
+  # Detect current layout by checking if "hive" window exists
+  local current_layout="custom"
+  if tmux list-windows -t "$session" -F '#{window_name}' | grep -qx "hive"; then
+    current_layout="default"
+  fi
+
+  if [[ "$current_layout" == "$target_layout" ]]; then
+    log_info "Already using $target_layout layout"
+    exit 0
+  fi
+
+  log_info "Switching from $current_layout to $target_layout layout..."
+
+  if [[ "$target_layout" == "default" ]]; then
+    switch_to_default_layout "$session" "$config"
+  else
+    switch_to_custom_layout "$session" "$config"
+  fi
+
+  log_ok "Switched to $target_layout layout"
+}
+
+switch_to_default_layout() {
+  local session="$1"
+  local config="$2"
+
+  # Create new "hive" window
+  tmux new-window -t "$session" -n "hive"
+
+  # Get architect pane and move it first
+  local arch_pane
+  arch_pane=$(tmux list-panes -t "$session" -a -F '#{pane_id} #{pane_title}' | grep "architect" | head -1 | cut -d' ' -f1)
+
+  if [[ -n "$arch_pane" ]]; then
+    # Move architect to hive window as first pane
+    tmux join-pane -s "$arch_pane" -t "$session:hive" -h
+    # Kill the empty pane that was created with new-window
+    tmux kill-pane -t "$session:hive.0" 2>/dev/null || true
+  fi
+
+  # Move all worker panes to hive window
+  local pane_id pane_title
+  while read -r pane_id pane_title; do
+    [[ -z "$pane_id" ]] && continue
+    [[ "$pane_title" == "architect" ]] && continue
+    [[ "$pane_title" == "watcher" ]] && continue
+
+    # Move pane to hive window
+    tmux join-pane -s "$pane_id" -t "$session:hive" -v 2>/dev/null || true
+  done < <(tmux list-panes -t "$session" -a -F '#{pane_id} #{pane_title}')
+
+  # Apply main-vertical layout (architect on left)
+  tmux select-layout -t "$session:hive" main-vertical
+
+  # Set main pane width to 50%
+  tmux resize-pane -t "$session:hive.0" -x 50%
+
+  # Clean up empty windows (except watch)
+  local win_name
+  while read -r win_name; do
+    [[ "$win_name" == "hive" ]] && continue
+    [[ "$win_name" == "watch" ]] && continue
+
+    # Check if window has any panes
+    local pane_count
+    pane_count=$(tmux list-panes -t "$session:$win_name" 2>/dev/null | wc -l)
+    if [[ "$pane_count" -eq 0 ]] || [[ -z "$pane_count" ]]; then
+      tmux kill-window -t "$session:$win_name" 2>/dev/null || true
+    else
+      # Window might still have panes if move failed, try to kill anyway
+      tmux kill-window -t "$session:$win_name" 2>/dev/null || true
+    fi
+  done < <(tmux list-windows -t "$session" -F '#{window_name}')
+
+  # Select hive window
+  tmux select-window -t "$session:hive"
+}
+
+switch_to_custom_layout() {
+  local session="$1"
+  local config="$2"
+  local project_dir
+  project_dir=$(get_project_dir "$config")
+
+  # First, create architect window and move architect pane
+  tmux new-window -t "$session" -n "architect"
+
+  local arch_pane
+  arch_pane=$(tmux list-panes -t "$session" -a -F '#{pane_id} #{pane_title}' | grep "architect" | head -1 | cut -d' ' -f1)
+
+  if [[ -n "$arch_pane" ]]; then
+    tmux join-pane -s "$arch_pane" -t "$session:architect" -h
+    tmux kill-pane -t "$session:architect.0" 2>/dev/null || true
+  fi
+
+  # Create windows from config and move workers
+  local num_windows
+  num_windows=$(yq -r '.windows | length' "$config")
+
+  for ((w=0; w<num_windows; w++)); do
+    local window_name layout
+    window_name=$(yq -r ".windows[$w].name" "$config")
+    layout=$(yq -r ".windows[$w].layout // \"even-horizontal\"" "$config")
+
+    # Create window if it doesn't exist
+    if ! tmux list-windows -t "$session" -F '#{window_name}' | grep -qx "$window_name"; then
+      tmux new-window -t "$session" -n "$window_name"
+    fi
+
+    # Move workers to this window
+    local num_workers first_pane=1
+    num_workers=$(yq -r ".windows[$w].workers | length" "$config")
+
+    for ((p=0; p<num_workers; p++)); do
+      local worker_id
+      worker_id=$(yq -r ".windows[$w].workers[$p].id" "$config")
+
+      # Find pane by title
+      local worker_pane
+      worker_pane=$(tmux list-panes -t "$session" -a -F '#{pane_id} #{pane_title}' | grep " ${worker_id}$" | head -1 | cut -d' ' -f1)
+
+      if [[ -n "$worker_pane" ]]; then
+        if [[ $first_pane -eq 1 ]]; then
+          tmux join-pane -s "$worker_pane" -t "$session:$window_name" -h
+          tmux kill-pane -t "$session:$window_name.0" 2>/dev/null || true
+          first_pane=0
+        else
+          tmux join-pane -s "$worker_pane" -t "$session:$window_name" -v
+        fi
+      fi
+    done
+
+    # Apply layout
+    tmux select-layout -t "$session:$window_name" "$layout" 2>/dev/null || true
+  done
+
+  # Kill the old hive window
+  tmux kill-window -t "$session:hive" 2>/dev/null || true
+
+  # Select architect window
+  tmux select-window -t "$session:architect"
+}
+
+#------------------------------------------------------------------------------
 # Main
 #------------------------------------------------------------------------------
 
@@ -2092,6 +2274,7 @@ main() {
     watch) cmd_watch "$@" ;;
     role) cmd_role "$@" ;;
     doctor) cmd_doctor "$@" ;;
+    layout) cmd_layout "$@" ;;
     -h|--help|help) cmd_help ;;
     -v|--version) echo "$SCRIPT_NAME v$VERSION" ;;
     *) log_error "Unknown command: $cmd"; cmd_help; exit 1 ;;
