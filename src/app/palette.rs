@@ -19,7 +19,8 @@ pub enum PaletteAction {
     NudgeAll,
     NudgeFocused,
     ToggleHelp,
-    Quit,
+    Detach,
+    Kill,
 }
 
 pub fn build_items(app: &App) -> Vec<PaletteItem> {
@@ -61,8 +62,12 @@ pub fn build_items(app: &App) -> Vec<PaletteItem> {
             action: PaletteAction::ToggleHelp,
         },
         PaletteItem {
-            label: "Quit hive".to_string(),
-            action: PaletteAction::Quit,
+            label: "Detach from session".to_string(),
+            action: PaletteAction::Detach,
+        },
+        PaletteItem {
+            label: "Kill server and exit".to_string(),
+            action: PaletteAction::Kill,
         },
     ];
 
@@ -81,7 +86,23 @@ pub fn build_items(app: &App) -> Vec<PaletteItem> {
 }
 
 pub fn filter_indices(items: &[PaletteItem], query: &str) -> Vec<usize> {
-    if query.trim().is_empty() {
+    let trimmed = query.trim();
+
+    // ">" prefix filters to only pane items
+    if trimmed.starts_with('>') {
+        let pane_query = trimmed[1..].trim().to_lowercase();
+        return items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| {
+                matches!(item.action, PaletteAction::FocusPane(_))
+                    && (pane_query.is_empty() || item.label.to_lowercase().contains(&pane_query))
+            })
+            .map(|(idx, _)| idx)
+            .collect();
+    }
+
+    if trimmed.is_empty() {
         return (0..items.len()).collect();
     }
 

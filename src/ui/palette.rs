@@ -21,8 +21,15 @@ pub fn render_palette(frame: &mut Frame, app: &App) {
 
     for (idx, item_idx) in filtered.iter().enumerate() {
         let item = &items[*item_idx];
-        let prefix = if idx == app.palette_selection { ">" } else { " " };
-        lines.push(format!("{} {}", prefix, item.label));
+        let selected = idx == app.palette_selection;
+        let prefix = if selected { ">" } else { " " };
+        // Show number shortcuts 1-9 for first 9 items
+        let number = if idx < 9 {
+            format!("{}", idx + 1)
+        } else {
+            " ".to_string()
+        };
+        lines.push(format!("{} {} {}", prefix, number, item.label));
     }
 
     let paragraph = Paragraph::new(lines.join("\n"))

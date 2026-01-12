@@ -248,54 +248,55 @@ vt100 = "0.15"  # VT100 terminal emulator for PTY output parsing
 hive-tui/
 ├── Cargo.toml
 ├── src/
-│   ├── main.rs              # Entry point, CLI parsing
+│   ├── main.rs              # Entry point, CLI parsing with clap
 │   ├── lib.rs               # Library exports
 │   │
 │   ├── app/
-│   │   ├── mod.rs           # App module exports
-│   │   ├── state.rs         # Application state
-│   │   ├── actions.rs       # User actions/events
-│   │   └── handler.rs       # Event handling
+│   │   ├── mod.rs           # App struct and core methods
+│   │   ├── state.rs         # AppState, focus management
+│   │   ├── events.rs        # Event types (Key, Pty, Timer)
+│   │   └── handler.rs       # Event routing and handling
 │   │
 │   ├── config/
-│   │   ├── mod.rs           # Config module exports
-│   │   ├── parser.rs        # .hive.yaml parsing
-│   │   └── validation.rs    # Config validation
+│   │   ├── mod.rs           # HiveConfig and all config structs
+│   │   ├── parser.rs        # .hive.yaml parsing with serde
+│   │   └── validation.rs    # Config validation and defaults
 │   │
 │   ├── pty/
 │   │   ├── mod.rs           # PTY module exports
-│   │   ├── manager.rs       # PTY process management
-│   │   ├── pane.rs          # Individual pane/PTY
-│   │   └── output.rs        # Output buffer management
+│   │   ├── manager.rs       # Spawn/kill PTY processes
+│   │   ├── pane.rs          # Pane struct (PTY + state)
+│   │   └── output.rs        # OutputBuffer with scrollback
 │   │
 │   ├── tasks/
-│   │   ├── mod.rs           # Tasks module exports
-│   │   ├── yaml.rs          # YAML task source
+│   │   ├── mod.rs           # TaskSource trait, TaskCounts
+│   │   ├── yaml.rs          # YAML file task source
 │   │   ├── github.rs        # GitHub Projects task source
-│   │   └── watcher.rs       # File/poll watching
+│   │   └── watcher.rs       # File watching with notify
 │   │
 │   ├── ui/
-│   │   ├── mod.rs           # UI module exports
-│   │   ├── layout.rs        # Layout management
-│   │   ├── pane.rs          # Pane widget
-│   │   ├── status_bar.rs    # Status bar widget
-│   │   ├── tab_bar.rs       # Tab/window bar
+│   │   ├── mod.rs           # Main ui() function
+│   │   ├── sidebar.rs       # Sidebar struct and rendering
+│   │   ├── pane_widget.rs   # Pane rendering
+│   │   ├── layout.rs        # calculate_main_layout()
+│   │   ├── status_bar.rs    # Status bar rendering
+│   │   ├── title_bar.rs     # Title bar rendering
 │   │   └── help.rs          # Help overlay
 │   │
 │   ├── commands/
-│   │   ├── mod.rs           # Command module exports
-│   │   ├── init.rs          # hive init
-│   │   ├── up.rs            # hive up
+│   │   ├── mod.rs           # Command dispatch
+│   │   ├── up.rs            # hive up (main TUI loop)
 │   │   ├── stop.rs          # hive stop
-│   │   ├── nudge.rs         # hive nudge
-│   │   ├── status.rs        # hive status
-│   │   ├── role.rs          # hive role
+│   │   ├── status.rs        # hive status (non-TUI)
+│   │   ├── nudge.rs         # hive nudge (CLI or in-app)
+│   │   ├── init.rs          # hive init (interactive setup)
+│   │   ├── role.rs          # hive role (generate .md files)
 │   │   └── doctor.rs        # hive doctor
 │   │
 │   └── utils/
-│       ├── mod.rs           # Utils module exports
-│       ├── git.rs           # Git helpers (exclude, worktrees)
-│       └── shell.rs         # Shell/env helpers
+│       ├── mod.rs           # Utility exports
+│       ├── git.rs           # Git exclude, worktree detection
+│       └── messages.rs      # Message template substitution
 ```
 
 ### Core Types
@@ -305,16 +306,51 @@ hive-tui/
 
 pub struct App {
     pub config: HiveConfig,
-    pub layout_mode: LayoutMode,
     pub panes: Vec<Pane>,
-    pub focused_pane: usize,
+    pub sidebar: Sidebar,
     pub watcher: TaskWatcher,
+    pub task_counts: HashMap<String, TaskCounts>,
     pub running: bool,
+    pub show_help: bool,
+    pub sidebar_visible: bool,
 }
 
-pub enum LayoutMode {
-    Default,  // All in one view
-    Custom,   // Separate windows/tabs
+impl App {
+    /// Get panes that are currently visible (shown in main area)
+    pub fn visible_panes(&self) -> Vec<&Pane> {
+        self.panes.iter().filter(|p| p.visible).collect()
+    }
+
+    /// Get the currently focused pane
+    pub fn focused_pane(&self) -> Option<&Pane> {
+        self.panes.iter().find(|p| p.focused)
+    }
+
+    /// Get mutable reference to focused pane
+    pub fn focused_pane_mut(&mut self) -> Option<&mut Pane> {
+        self.panes.iter_mut().find(|p| p.focused)
+    }
+}
+
+// src/ui/sidebar.rs
+
+pub struct Sidebar {
+    pub items: Vec<SidebarItem>,
+    pub selected_index: usize,
+    pub focused: bool,  // Whether sidebar has input focus
+}
+
+#[derive(Debug, Clone)]
+pub enum SidebarItem {
+    Pane {
+        pane_id: String,
+    },
+    Group {
+        name: String,
+        source_dir: String,
+        expanded: bool,
+        children: Vec<String>,  // pane_ids
+    },
 }
 
 // src/pty/pane.rs
@@ -326,12 +362,52 @@ pub struct Pane {
     pub output_buffer: OutputBuffer,
     pub lane: Option<String>,
     pub working_dir: PathBuf,
+    pub branch: Option<BranchConfig>,
+
+    // UI state
+    pub visible: bool,      // Shown in main area
+    pub focused: bool,      // Receives keyboard input
+}
+
+impl Pane {
+    pub fn new_architect(pty: PtyPair, working_dir: PathBuf) -> Self {
+        Self {
+            id: "architect".to_string(),
+            pane_type: PaneType::Architect,
+            pty,
+            output_buffer: OutputBuffer::new(10_000),
+            lane: None,
+            working_dir,
+            branch: None,
+            visible: true,   // Architect visible by default
+            focused: true,   // Architect focused by default
+        }
+    }
+
+    pub fn new_worker(
+        id: String,
+        lane: String,
+        pty: PtyPair,
+        working_dir: PathBuf,
+        branch: Option<BranchConfig>,
+    ) -> Self {
+        Self {
+            id,
+            pane_type: PaneType::Worker { lane: lane.clone() },
+            pty,
+            output_buffer: OutputBuffer::new(10_000),
+            lane: Some(lane),
+            working_dir,
+            branch,
+            visible: false,  // Workers hidden by default
+            focused: false,
+        }
+    }
 }
 
 pub enum PaneType {
     Architect,
     Worker { lane: String },
-    Watcher,
 }
 
 // src/pty/output.rs
@@ -339,7 +415,45 @@ pub enum PaneType {
 pub struct OutputBuffer {
     pub lines: VecDeque<String>,
     pub max_lines: usize,
-    pub scroll_offset: usize,
+    pub scroll_offset: usize,  // For scrollback
+}
+
+impl OutputBuffer {
+    pub fn new(max_lines: usize) -> Self {
+        Self {
+            lines: VecDeque::with_capacity(max_lines),
+            max_lines,
+            scroll_offset: 0,
+        }
+    }
+
+    pub fn push(&mut self, line: String) {
+        if self.lines.len() >= self.max_lines {
+            self.lines.pop_front();
+        }
+        self.lines.push_back(line);
+    }
+
+    /// Get lines visible in a given height, accounting for scroll offset
+    pub fn visible_lines(&self, height: usize) -> Vec<&str> {
+        let total = self.lines.len();
+        let start = total.saturating_sub(height + self.scroll_offset);
+        let end = total.saturating_sub(self.scroll_offset);
+        self.lines.range(start..end).map(|s| s.as_str()).collect()
+    }
+
+    pub fn scroll_up(&mut self, lines: usize) {
+        let max_scroll = self.lines.len().saturating_sub(1);
+        self.scroll_offset = (self.scroll_offset + lines).min(max_scroll);
+    }
+
+    pub fn scroll_down(&mut self, lines: usize) {
+        self.scroll_offset = self.scroll_offset.saturating_sub(lines);
+    }
+
+    pub fn scroll_to_bottom(&mut self) {
+        self.scroll_offset = 0;
+    }
 }
 ```
 
@@ -718,91 +832,450 @@ fn resize_pane(pane: &mut Pane, rows: u16, cols: u16) -> Result<()> {
 
 ## Layout System
 
-### Default Layout
+### IDE-Style Layout
 
-All panes in one view:
-- Architect on left (50% width)
-- Workers stacked vertically on right
+The UI follows an IDE-like design with a **sidebar** for navigation and a **main area** for pane display:
 
 ```
-┌─────────────────────┬─────────────────────┐
-│                     │      Worker 1       │
-│                     ├─────────────────────┤
-│     Architect       │      Worker 2       │
-│                     ├─────────────────────┤
-│                     │      Worker 3       │
-└─────────────────────┴─────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│  Hive - my-project                                        [?] Help   │
+├────────────────┬─────────────────────────────────────────────────────┤
+│ PANES          │                                                     │
+│                │  ┌─────────────────────┬─────────────────────┐      │
+│ ▶ ● architect  │  │                     │                     │      │
+│                │  │     architect       │    backend-api      │      │
+│ ▼ backend (3)  │  │                     │      (api)          │      │
+│   ● backend-api│  │                     │                     │      │
+│   ○ backend-aut│  ├─────────────────────┼─────────────────────┤      │
+│   ○ backend-tes│  │                     │                     │      │
+│                │  │   backend-tests     │   backend-auth      │      │
+│ ▼ frontend (2) │  │     (tests)         │     (auth)          │      │
+│   ○ frontend-we│  │                     │                     │      │
+│   ○ frontend-mo│  └─────────────────────┴─────────────────────┘      │
+│                │                                                     │
+│ ▶ sdks (4)     │                                                     │
+│                │                                                     │
+├────────────────┴─────────────────────────────────────────────────────┤
+│  4 visible │ api: 2 tasks │ auth: 0 │ tests: 1 │ Watching            │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-### Custom Layout
+### Sidebar Tree Structure
 
-Tabs/windows as configured:
-- Each window is a tab
-- Workers within window arranged by layout setting
+The sidebar displays panes in a hierarchical tree:
 
 ```
-[Architect] [Backend] [Frontend] [Watch]
-
-┌─────────────────────────────────────────────┐
-│  Worker 1  │  Worker 2  │  Worker 3         │
-│  (api)     │  (auth)    │  (tests)          │
-└─────────────────────────────────────────────┘
+PANES
+├── ● architect                    # Always at top, standalone
+│
+├── ▼ backend (3)                  # Group: worktrees from ./backend
+│   ├── ● backend-api              # Worktree worker (visible)
+│   ├── ○ backend-auth             # Worktree worker (hidden)
+│   └── ○ backend-tests            # Worktree worker (hidden)
+│
+├── ▼ frontend (2)                 # Group: worktrees from ./frontend
+│   ├── ○ frontend-web             # Worktree worker
+│   └── ○ frontend-mobile          # Worktree worker
+│
+├── ▶ sdks (4)                     # Group: collapsed (▶)
+│
+└── ● docs                         # Standalone worker (no worktrees)
 ```
 
-### Layout Calculation
+**Legend:**
+- `●` = Visible (displayed in main area)
+- `○` = Hidden (PTY still running, just not displayed)
+- `▶` = Group collapsed
+- `▼` = Group expanded
+- `(N)` = Number of workers in group
+
+### Sidebar Interactions
+
+When the sidebar is focused:
+
+| Key | Action |
+|-----|--------|
+| `↑` / `k` | Move selection up |
+| `↓` / `j` | Move selection down |
+| `Space` | Toggle visibility of selected item |
+| `Enter` | Toggle visibility AND focus the pane |
+| `a` | Select all in group / Select all |
+| `n` | Select none in group / Select none |
+| `Tab` | Move focus to main area |
+| `←` / `h` | Collapse group |
+| `→` / `l` | Expand group |
+
+**Group selection behavior:**
+- Pressing `Space` on a group header toggles ALL items in that group
+- Pressing `a` on a group selects all items in that group
+- Pressing `n` on a group deselects all items in that group
+
+### Visibility vs Focus
+
+Two separate concepts:
+
+1. **Visibility** (`visible: bool`): Whether the pane is displayed in the main area
+   - Hidden panes still run their PTY process
+   - Hidden panes still receive nudges
+   - Toggle with `Space` in sidebar
+
+2. **Focus** (`focused: bool`): Which pane receives keyboard input
+   - Only one pane can be focused at a time
+   - Indicated by highlighted border
+   - Change with arrow keys in main area or `Enter` in sidebar
+
+### Main Area Layout
+
+The main area dynamically arranges **only visible panes**:
+
+**1 pane visible:**
+```
+┌─────────────────────────────────────────┐
+│                                         │
+│              architect                  │
+│                                         │
+└─────────────────────────────────────────┘
+```
+
+**2 panes visible:**
+```
+┌───────────────────┬─────────────────────┐
+│                   │                     │
+│    architect      │    backend-api      │
+│                   │                     │
+└───────────────────┴─────────────────────┘
+```
+
+**3 panes visible:**
+```
+┌───────────────────┬─────────────────────┐
+│                   │    backend-api      │
+│    architect      ├─────────────────────┤
+│                   │    backend-auth     │
+└───────────────────┴─────────────────────┘
+```
+
+**4 panes visible:**
+```
+┌───────────────────┬─────────────────────┐
+│    architect      │    backend-api      │
+├───────────────────┼─────────────────────┤
+│   backend-auth    │   backend-tests     │
+└───────────────────┴─────────────────────┘
+```
+
+**5+ panes visible:** Grid layout, rows of 2-3
+
+### Layout Algorithm
 
 ```rust
-pub fn calculate_layout(
-    area: Rect,
-    layout_mode: LayoutMode,
-    panes: &[Pane],
-    focused_window: usize,
-) -> Vec<(usize, Rect)> {
-    match layout_mode {
-        LayoutMode::Default => calculate_default_layout(area, panes),
-        LayoutMode::Custom => calculate_custom_layout(area, panes, focused_window),
+pub fn calculate_main_layout(area: Rect, visible_panes: &[&Pane]) -> Vec<Rect> {
+    let count = visible_panes.len();
+
+    match count {
+        0 => vec![],
+        1 => vec![area],
+        2 => {
+            // Side by side
+            Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(area)
+                .to_vec()
+        }
+        3 => {
+            // Left pane full height, right split vertically
+            let cols = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(area);
+            let right = Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(cols[1]);
+            vec![cols[0], right[0], right[1]]
+        }
+        4 => {
+            // 2x2 grid
+            let rows = Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(area);
+            let top = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(rows[0]);
+            let bottom = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(rows[1]);
+            vec![top[0], top[1], bottom[0], bottom[1]]
+        }
+        n => {
+            // Grid: ceil(n/2) rows, 2 columns
+            let num_rows = (n + 1) / 2;
+            let row_constraints = vec![Constraint::Ratio(1, num_rows as u32); num_rows];
+            let rows = Layout::vertical(row_constraints).split(area);
+
+            let mut rects = Vec::new();
+            for (i, row) in rows.iter().enumerate() {
+                let items_in_row = if i == num_rows - 1 && n % 2 == 1 { 1 } else { 2 };
+                let col_constraints = vec![Constraint::Ratio(1, items_in_row as u32); items_in_row];
+                let cols = Layout::horizontal(col_constraints).split(*row);
+                rects.extend(cols.iter().cloned());
+            }
+            rects
+        }
     }
 }
+```
 
-fn calculate_default_layout(area: Rect, panes: &[Pane]) -> Vec<(usize, Rect)> {
-    let mut result = Vec::new();
+### Sidebar Data Structure
 
-    // Find architect
-    let architect_idx = panes.iter().position(|p| matches!(p.pane_type, PaneType::Architect));
+```rust
+/// Represents an item in the sidebar tree
+#[derive(Debug)]
+pub enum SidebarItem {
+    /// A single pane (architect or standalone worker)
+    Pane {
+        pane_id: String,
+        visible: bool,
+    },
+    /// A group of related workers (worktrees from same source)
+    Group {
+        name: String,           // e.g., "backend"
+        source_dir: String,     // e.g., "./backend"
+        expanded: bool,
+        children: Vec<String>,  // pane_ids of workers in this group
+    },
+}
 
-    // Workers (excluding architect and watcher)
-    let worker_indices: Vec<usize> = panes.iter()
-        .enumerate()
-        .filter(|(_, p)| matches!(p.pane_type, PaneType::Worker { .. }))
-        .map(|(i, _)| i)
-        .collect();
+/// Sidebar state
+pub struct Sidebar {
+    pub items: Vec<SidebarItem>,
+    pub selected_index: usize,
+    pub focused: bool,
+}
 
-    // Split area: 50% left for architect, 50% right for workers
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(area);
+impl Sidebar {
+    /// Build sidebar from config, grouping worktrees by source directory
+    pub fn from_config(config: &HiveConfig, panes: &[Pane]) -> Self {
+        let mut items = Vec::new();
 
-    // Architect gets left side
-    if let Some(idx) = architect_idx {
-        result.push((idx, chunks[0]));
-    }
+        // Architect always first
+        items.push(SidebarItem::Pane {
+            pane_id: "architect".to_string(),
+            visible: true,
+        });
 
-    // Workers split vertically on right
-    if !worker_indices.is_empty() {
-        let worker_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(vec![Constraint::Ratio(1, worker_indices.len() as u32); worker_indices.len()])
-            .split(chunks[1]);
+        // Group workers by their source directory (worktree parent)
+        // Workers with same source dir prefix are grouped together
+        // e.g., backend-api, backend-auth from ./backend become a group
 
-        for (i, &idx) in worker_indices.iter().enumerate() {
-            result.push((idx, worker_chunks[i]));
+        // ... grouping logic ...
+
+        Self {
+            items,
+            selected_index: 0,
+            focused: false,
         }
     }
 
-    result
+    /// Toggle visibility of selected item (or all items in group)
+    pub fn toggle_selected(&mut self, panes: &mut [Pane]) {
+        match &mut self.items[self.selected_index] {
+            SidebarItem::Pane { pane_id, visible } => {
+                *visible = !*visible;
+                if let Some(pane) = panes.iter_mut().find(|p| &p.id == pane_id) {
+                    pane.visible = *visible;
+                }
+            }
+            SidebarItem::Group { children, .. } => {
+                // If any visible, hide all. Otherwise, show all.
+                let any_visible = children.iter().any(|id| {
+                    panes.iter().find(|p| &p.id == id).map(|p| p.visible).unwrap_or(false)
+                });
+                let new_state = !any_visible;
+                for child_id in children {
+                    if let Some(pane) = panes.iter_mut().find(|p| &p.id == child_id) {
+                        pane.visible = new_state;
+                    }
+                }
+            }
+        }
+    }
 }
 ```
+
+### Determining Groups from Config
+
+Groups are automatically determined by analyzing worker directory patterns. Workers with similar directory prefixes are grouped together.
+
+**Grouping Rules:**
+
+1. **Worktree pattern**: `./prefix-suffix` → grouped under "prefix"
+   - `./backend-api`, `./backend-auth`, `./backend-tests` → group "backend"
+   - `./frontend-web`, `./frontend-mobile` → group "frontend"
+
+2. **Standalone**: Workers that don't match a pattern remain ungrouped
+   - `./docs` → standalone (no hyphen)
+   - `.` → standalone (current directory)
+
+3. **Single match**: If only one worker matches a prefix, it's standalone
+   - `./sdk-ios` alone → standalone, not a group of 1
+
+**Example config → sidebar:**
+
+```yaml
+windows:
+  - name: backend
+    workers:
+      - id: backend-api
+        dir: ./backend-api
+        lane: api
+      - id: backend-auth
+        dir: ./backend-auth
+        lane: auth
+      - id: backend-tests
+        dir: ./backend-tests
+        lane: tests
+  - name: frontend
+    workers:
+      - id: frontend-web
+        dir: ./frontend-web
+        lane: web
+  - name: docs
+    workers:
+      - id: docs
+        dir: ./docs
+        lane: docs
+```
+
+**Results in sidebar:**
+```
+PANES
+├── ● architect
+├── ▼ backend (3)           <- Group (3 workers with "backend-" prefix)
+│   ├── ○ backend-api
+│   ├── ○ backend-auth
+│   └── ○ backend-tests
+├── ○ frontend-web          <- Standalone (only one "frontend-" worker)
+└── ○ docs                  <- Standalone (no hyphen in dir)
+```
+
+**Implementation:**
+
+```rust
+/// Build sidebar items from config, automatically grouping by directory prefix
+pub fn build_sidebar_items(config: &HiveConfig, panes: &[Pane]) -> Vec<SidebarItem> {
+    let mut items = Vec::new();
+
+    // Architect always first
+    items.push(SidebarItem::Pane {
+        pane_id: "architect".to_string(),
+    });
+
+    // Collect all workers with their directory prefixes
+    let mut prefix_map: HashMap<String, Vec<String>> = HashMap::new();
+    let mut standalone: Vec<String> = Vec::new();
+
+    for window in &config.windows {
+        for worker in &window.workers {
+            let dir = worker.dir.as_deref().unwrap_or(".");
+            let dir = dir.strip_prefix("./").unwrap_or(dir);
+
+            if let Some(prefix) = extract_prefix(dir) {
+                prefix_map.entry(prefix).or_default().push(worker.id.clone());
+            } else {
+                standalone.push(worker.id.clone());
+            }
+        }
+    }
+
+    // Groups with 2+ workers become groups, others become standalone
+    for (prefix, mut worker_ids) in prefix_map {
+        if worker_ids.len() >= 2 {
+            worker_ids.sort(); // Consistent ordering
+            items.push(SidebarItem::Group {
+                name: prefix,
+                source_dir: format!("./{}-*", prefix),
+                expanded: true,
+                children: worker_ids,
+            });
+        } else {
+            standalone.extend(worker_ids);
+        }
+    }
+
+    // Add standalone workers
+    standalone.sort();
+    for id in standalone {
+        items.push(SidebarItem::Pane { pane_id: id });
+    }
+
+    items
+}
+
+/// Extract prefix from directory: "backend-api" -> Some("backend")
+fn extract_prefix(dir: &str) -> Option<String> {
+    // Must contain a hyphen and have content on both sides
+    if let Some(idx) = dir.rfind('-') {
+        let prefix = &dir[..idx];
+        let suffix = &dir[idx + 1..];
+        if !prefix.is_empty() && !suffix.is_empty() {
+            return Some(prefix.to_string());
+        }
+    }
+    None
+}
+```
+
+### Alternative: Explicit Groups in Config (Future Enhancement)
+
+Users could optionally specify groups explicitly:
+
+```yaml
+# Future: explicit group configuration
+sidebar:
+  groups:
+    - name: Backend Services
+      workers: [backend-api, backend-auth, backend-tests]
+    - name: SDKs
+      workers: [sdk-ios, sdk-android, sdk-web]
+```
+
+This would override automatic detection. Not implemented in Phase 1.
+
+### Sidebar Toggle Behavior
+
+```
+Scenario: User wants to view all backend workers
+
+Before:
+  PANES
+  ├── ● architect
+  ├── ▼ backend (3)
+  │   ├── ○ backend-api
+  │   ├── ○ backend-auth
+  │   └── ○ backend-tests
+  └── ● docs
+
+User presses ↓↓ to select "backend" group, then Space:
+
+After:
+  PANES
+  ├── ● architect
+  ├── ▼ backend (3)
+  │   ├── ● backend-api      <- now visible
+  │   ├── ● backend-auth     <- now visible
+  │   └── ● backend-tests    <- now visible
+  └── ● docs
+
+Main area now shows: architect + 3 backend workers (4 panes in grid)
+```
+
+### Sidebar Width
+
+The sidebar has a fixed width (configurable):
+
+```rust
+const SIDEBAR_WIDTH: u16 = 20;  // Characters
+
+// Can be toggled with Ctrl+B b
+pub fn toggle_sidebar(&mut self) {
+    self.sidebar_visible = !self.sidebar_visible;
+}
+```
+
+When sidebar is hidden, main area takes full width.
 
 ---
 
@@ -963,21 +1436,177 @@ fn build_nudge_message(
 
 ```rust
 pub fn ui(frame: &mut Frame, app: &App) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),  // Tab bar
-            Constraint::Min(0),     // Panes
-            Constraint::Length(1),  // Status bar
-        ])
-        .split(frame.area());
+    let area = frame.area();
 
-    render_tab_bar(frame, chunks[0], app);
-    render_panes(frame, chunks[1], app);
-    render_status_bar(frame, chunks[2], app);
+    // Main layout: title bar, content, status bar
+    let main_chunks = Layout::vertical([
+        Constraint::Length(1),  // Title bar
+        Constraint::Min(0),     // Content (sidebar + panes)
+        Constraint::Length(1),  // Status bar
+    ]).split(area);
+
+    render_title_bar(frame, main_chunks[0], app);
+
+    // Content: optional sidebar + main pane area
+    if app.sidebar_visible {
+        let content_chunks = Layout::horizontal([
+            Constraint::Length(SIDEBAR_WIDTH),
+            Constraint::Min(0),
+        ]).split(main_chunks[1]);
+
+        render_sidebar(frame, content_chunks[0], app);
+        render_main_area(frame, content_chunks[1], app);
+    } else {
+        render_main_area(frame, main_chunks[1], app);
+    }
+
+    render_status_bar(frame, main_chunks[2], app);
 
     if app.show_help {
         render_help_overlay(frame, app);
+    }
+}
+
+const SIDEBAR_WIDTH: u16 = 22;
+```
+
+### Title Bar
+
+```rust
+pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &App) {
+    let title = format!(" Hive - {} ", app.config.session);
+    let help_hint = "[?] Help  [Ctrl+B b] Toggle Sidebar";
+
+    let title_style = Style::default()
+        .fg(Color::White)
+        .bg(Color::Blue)
+        .add_modifier(Modifier::BOLD);
+
+    // Title on left, help hint on right
+    let line = Line::from(vec![
+        Span::styled(title, title_style),
+        Span::raw(" ".repeat((area.width as usize).saturating_sub(title.len() + help_hint.len() + 2))),
+        Span::styled(help_hint, Style::default().fg(Color::DarkGray).bg(Color::Blue)),
+    ]);
+
+    frame.render_widget(Paragraph::new(line).style(Style::default().bg(Color::Blue)), area);
+}
+```
+
+### Sidebar Widget
+
+```rust
+pub fn render_sidebar(frame: &mut Frame, area: Rect, app: &App) {
+    let border_style = if app.sidebar.focused {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    let block = Block::default()
+        .title(" PANES ")
+        .borders(Borders::ALL)
+        .border_style(border_style);
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // Build list items from sidebar tree
+    let mut list_items = Vec::new();
+    let mut item_index = 0;
+
+    for item in &app.sidebar.items {
+        match item {
+            SidebarItem::Pane { pane_id } => {
+                let pane = app.panes.iter().find(|p| &p.id == pane_id);
+                let visible = pane.map(|p| p.visible).unwrap_or(false);
+                let focused = pane.map(|p| p.focused).unwrap_or(false);
+
+                let icon = if visible { "●" } else { "○" };
+                let style = if app.sidebar.selected_index == item_index {
+                    Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+                } else if focused {
+                    Style::default().fg(Color::Yellow)
+                } else if visible {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                };
+
+                list_items.push(ListItem::new(format!("{} {}", icon, pane_id)).style(style));
+                item_index += 1;
+            }
+            SidebarItem::Group { name, expanded, children, .. } => {
+                let arrow = if *expanded { "▼" } else { "▶" };
+                let visible_count = children.iter()
+                    .filter(|id| app.panes.iter().find(|p| &p.id == *id).map(|p| p.visible).unwrap_or(false))
+                    .count();
+
+                let style = if app.sidebar.selected_index == item_index {
+                    Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Cyan)
+                };
+
+                list_items.push(ListItem::new(format!(
+                    "{} {} ({}/{})",
+                    arrow, name, visible_count, children.len()
+                )).style(style));
+                item_index += 1;
+
+                // Show children if expanded
+                if *expanded {
+                    for child_id in children {
+                        let pane = app.panes.iter().find(|p| &p.id == child_id);
+                        let visible = pane.map(|p| p.visible).unwrap_or(false);
+                        let focused = pane.map(|p| p.focused).unwrap_or(false);
+
+                        let icon = if visible { "●" } else { "○" };
+                        let style = if app.sidebar.selected_index == item_index {
+                            Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+                        } else if focused {
+                            Style::default().fg(Color::Yellow)
+                        } else if visible {
+                            Style::default().fg(Color::Green)
+                        } else {
+                            Style::default().fg(Color::DarkGray)
+                        };
+
+                        // Indent children
+                        list_items.push(ListItem::new(format!("  {} {}", icon, child_id)).style(style));
+                        item_index += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    let list = List::new(list_items);
+    frame.render_widget(list, inner);
+}
+```
+
+### Main Pane Area
+
+```rust
+pub fn render_main_area(frame: &mut Frame, area: Rect, app: &App) {
+    let visible_panes: Vec<&Pane> = app.panes.iter().filter(|p| p.visible).collect();
+
+    if visible_panes.is_empty() {
+        // Show hint when no panes visible
+        let hint = Paragraph::new("No panes visible.\n\nUse sidebar to select panes to display.")
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(hint, area);
+        return;
+    }
+
+    // Calculate layout for visible panes
+    let rects = calculate_main_layout(area, &visible_panes);
+
+    // Render each pane
+    for (pane, rect) in visible_panes.iter().zip(rects.iter()) {
+        render_pane(frame, *rect, pane);
     }
 }
 ```
@@ -985,33 +1614,60 @@ pub fn ui(frame: &mut Frame, app: &App) {
 ### Pane Widget
 
 ```rust
-pub fn render_pane(frame: &mut Frame, area: Rect, pane: &Pane, focused: bool) {
-    let border_style = if focused {
-        Style::default().fg(Color::Yellow)
+pub fn render_pane(frame: &mut Frame, area: Rect, pane: &Pane) {
+    let border_style = if pane.focused {
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::DarkGray)
     };
 
     let title = match &pane.pane_type {
-        PaneType::Architect => "architect".to_string(),
-        PaneType::Worker { lane } => format!("{} ({})", pane.id, lane),
-        PaneType::Watcher => "watcher".to_string(),
+        PaneType::Architect => " architect ".to_string(),
+        PaneType::Worker { lane } => format!(" {} ({}) ", pane.id, lane),
+    };
+
+    // Show task count in title for workers
+    let title_with_tasks = if let Some(lane) = &pane.lane {
+        // Would need access to task_counts here, or include in pane
+        title
+    } else {
+        title
     };
 
     let block = Block::default()
-        .title(title)
+        .title(title_with_tasks)
         .borders(Borders::ALL)
-        .border_style(border_style);
+        .border_style(border_style)
+        .border_type(if pane.focused { BorderType::Thick } else { BorderType::Plain });
 
-    // Render terminal output
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let output = pane.output_buffer.visible_lines(inner.height as usize);
-    let paragraph = Paragraph::new(output.join("\n"))
+    // Render terminal output
+    let height = inner.height as usize;
+    let output = pane.output_buffer.visible_lines(height);
+
+    // Join with newlines and render
+    let text = output.join("\n");
+    let paragraph = Paragraph::new(text)
         .wrap(Wrap { trim: false });
 
     frame.render_widget(paragraph, inner);
+
+    // Show scroll indicator if not at bottom
+    if pane.output_buffer.scroll_offset > 0 {
+        let indicator = format!("↑{}", pane.output_buffer.scroll_offset);
+        let indicator_area = Rect::new(
+            inner.x + inner.width - indicator.len() as u16 - 1,
+            inner.y,
+            indicator.len() as u16,
+            1,
+        );
+        frame.render_widget(
+            Paragraph::new(indicator).style(Style::default().fg(Color::Yellow)),
+            indicator_area,
+        );
+    }
 }
 ```
 
@@ -1021,27 +1677,97 @@ pub fn render_pane(frame: &mut Frame, area: Rect, pane: &Pane, focused: bool) {
 pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
     let mut parts = Vec::new();
 
-    // Worker count
-    let worker_count = app.panes.iter()
-        .filter(|p| matches!(p.pane_type, PaneType::Worker { .. }))
-        .count();
-    parts.push(format!("{} workers", worker_count));
+    // Visible pane count
+    let visible_count = app.panes.iter().filter(|p| p.visible).count();
+    let total_count = app.panes.len();
+    parts.push(format!("{}/{} visible", visible_count, total_count));
 
-    // Task counts per lane
+    // Task counts per lane (only show lanes with backlog)
     for (lane, counts) in &app.task_counts {
         if counts.backlog > 0 {
-            parts.push(format!("{}: {} backlog", lane, counts.backlog));
+            parts.push(format!("{}: {}", lane, counts.backlog));
         }
     }
 
     // Watcher status
-    parts.push("Watching".to_string());
+    parts.push("● Watching".to_string());
 
-    let status = parts.join(" | ");
-    let paragraph = Paragraph::new(status)
-        .style(Style::default().bg(Color::DarkGray));
+    let status = parts.join(" │ ");
+
+    let style = Style::default()
+        .fg(Color::White)
+        .bg(Color::DarkGray);
+
+    frame.render_widget(Paragraph::new(status).style(style), area);
+}
+```
+
+### Help Overlay
+
+```rust
+pub fn render_help_overlay(frame: &mut Frame, app: &App) {
+    let area = centered_rect(60, 80, frame.area());
+
+    // Clear background
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .title(" Help ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let help_text = r#"
+GLOBAL KEYBINDINGS
+  Ctrl+B b     Toggle sidebar
+  Ctrl+B n     Nudge all workers
+  Ctrl+B N     Nudge focused worker
+  Ctrl+B ?     Toggle this help
+  Ctrl+B q     Quit hive
+  Tab          Switch focus: sidebar ↔ panes
+
+SIDEBAR (when focused)
+  ↑/k, ↓/j     Navigate items
+  Space        Toggle visibility
+  Enter        Toggle visibility + focus pane
+  ←/h          Collapse group
+  →/l          Expand group
+  a            Select all (in group or all)
+  n            Select none (in group or all)
+
+MAIN AREA (when focused)
+  ↑↓←→         Move focus between panes
+  Page Up/Down Scroll pane output
+  Home         Scroll to top
+  End          Scroll to bottom
+  Ctrl+C       Send interrupt to pane
+
+SYMBOLS
+  ●  Visible pane (shown in main area)
+  ○  Hidden pane (still running)
+  ▶  Collapsed group
+  ▼  Expanded group
+"#;
+
+    let paragraph = Paragraph::new(help_text)
+        .block(block)
+        .wrap(Wrap { trim: false });
 
     frame.render_widget(paragraph, area);
+}
+
+/// Helper to create a centered rectangle
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let popup_layout = Layout::vertical([
+        Constraint::Percentage((100 - percent_y) / 2),
+        Constraint::Percentage(percent_y),
+        Constraint::Percentage((100 - percent_y) / 2),
+    ]).split(area);
+
+    Layout::horizontal([
+        Constraint::Percentage((100 - percent_x) / 2),
+        Constraint::Percentage(percent_x),
+        Constraint::Percentage((100 - percent_x) / 2),
+    ]).split(popup_layout[1])[1]
 }
 ```
 
@@ -1049,72 +1775,255 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
 
 ## Keybindings
 
-### Default Keybindings
+### Global Keybindings (Always Active)
 
 | Key | Action |
 |-----|--------|
 | `Ctrl+B` | Prefix key (like tmux) |
+| `Ctrl+B` `b` | Toggle sidebar visibility |
 | `Ctrl+B` `n` | Nudge all workers |
 | `Ctrl+B` `N` | Nudge focused worker |
-| `Ctrl+B` `l` | Toggle layout (default/custom) |
-| `Ctrl+B` `1-9` | Focus window/tab |
-| `Ctrl+B` `Arrow` | Move focus between panes |
 | `Ctrl+B` `z` | Zoom/maximize focused pane |
-| `Ctrl+B` `?` | Show help |
+| `Ctrl+B` `?` | Toggle help overlay |
 | `Ctrl+B` `d` | Detach (if server mode) |
-| `Ctrl+B` `q` | Quit |
-| `Ctrl+C` | Pass to focused pane |
-| `Page Up/Down` | Scroll pane output |
+| `Ctrl+B` `q` | Quit hive |
+| `Tab` | Switch focus between sidebar and main area |
+| `Escape` | Close help / Cancel |
+
+### Sidebar Keybindings (When Sidebar Focused)
+
+| Key | Action |
+|-----|--------|
+| `↑` / `k` | Move selection up |
+| `↓` / `j` | Move selection down |
+| `Space` | Toggle visibility of selected item |
+| `Enter` | Toggle visibility AND focus the pane |
+| `←` / `h` | Collapse group (if on group) |
+| `→` / `l` | Expand group (if on group) |
+| `a` | Select all visible (in group or globally) |
+| `n` | Select none (in group or globally) |
+| `1-9` | Quick toggle: show only pane N |
+
+### Main Area Keybindings (When Pane Focused)
+
+| Key | Action |
+|-----|--------|
+| `↑` `↓` `←` `→` | Move focus between visible panes |
+| `Page Up` | Scroll pane output up |
+| `Page Down` | Scroll pane output down |
+| `Home` | Scroll to top of output |
+| `End` | Scroll to bottom of output |
+| `Ctrl+C` | Send SIGINT to focused pane |
+| All other keys | Pass through to focused pane's PTY |
 
 ### Input Handling
 
 ```rust
 pub async fn handle_key_event(app: &mut App, key: KeyEvent) -> Result<bool> {
-    if app.prefix_mode {
-        app.prefix_mode = false;
-        match key.code {
-            KeyCode::Char('n') => {
-                nudge_workers(app, None).await?;
-            }
-            KeyCode::Char('N') => {
-                let focused_id = app.panes[app.focused_pane].id.clone();
-                nudge_workers(app, Some(&focused_id)).await?;
-            }
-            KeyCode::Char('l') => {
-                app.toggle_layout();
-            }
-            KeyCode::Char('z') => {
-                app.toggle_zoom();
-            }
-            KeyCode::Char('?') => {
-                app.show_help = !app.show_help;
-            }
-            KeyCode::Char('d') => {
-                return Ok(true); // Signal detach
-            }
-            KeyCode::Char('q') => {
-                return Ok(true); // Signal quit
-            }
-            KeyCode::Char(c) if c.is_ascii_digit() => {
-                let idx = c.to_digit(10).unwrap() as usize - 1;
-                if idx < app.windows.len() {
-                    app.focused_window = idx;
-                }
-            }
-            KeyCode::Up => app.focus_up(),
-            KeyCode::Down => app.focus_down(),
-            KeyCode::Left => app.focus_left(),
-            KeyCode::Right => app.focus_right(),
-            _ => {}
+    // Handle help overlay
+    if app.show_help {
+        if matches!(key.code, KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q')) {
+            app.show_help = false;
         }
-    } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('b') {
-        app.prefix_mode = true;
-    } else {
-        // Pass key to focused pane
-        send_key_to_pane(&mut app.panes[app.focused_pane], key)?;
+        return Ok(false);
     }
 
+    // Handle prefix mode (Ctrl+B was pressed)
+    if app.prefix_mode {
+        app.prefix_mode = false;
+        return handle_prefix_key(app, key).await;
+    }
+
+    // Check for prefix key
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('b') {
+        app.prefix_mode = true;
+        return Ok(false);
+    }
+
+    // Tab switches focus between sidebar and main area
+    if key.code == KeyCode::Tab {
+        if app.sidebar_visible {
+            app.sidebar.focused = !app.sidebar.focused;
+            // If moving to main area, ensure something is focused
+            if !app.sidebar.focused && app.focused_pane().is_none() {
+                if let Some(pane) = app.panes.iter_mut().find(|p| p.visible) {
+                    pane.focused = true;
+                }
+            }
+        }
+        return Ok(false);
+    }
+
+    // Route to appropriate handler
+    if app.sidebar.focused {
+        handle_sidebar_key(app, key).await
+    } else {
+        handle_pane_key(app, key).await
+    }
+}
+
+async fn handle_prefix_key(app: &mut App, key: KeyEvent) -> Result<bool> {
+    match key.code {
+        KeyCode::Char('b') => {
+            app.sidebar_visible = !app.sidebar_visible;
+            if !app.sidebar_visible {
+                app.sidebar.focused = false;
+            }
+        }
+        KeyCode::Char('n') => {
+            nudge_workers(app, None).await?;
+        }
+        KeyCode::Char('N') => {
+            if let Some(pane) = app.focused_pane() {
+                nudge_workers(app, Some(&pane.id.clone())).await?;
+            }
+        }
+        KeyCode::Char('z') => {
+            app.toggle_zoom();
+        }
+        KeyCode::Char('?') => {
+            app.show_help = !app.show_help;
+        }
+        KeyCode::Char('d') => {
+            // Detach (server mode only)
+            return Ok(true);
+        }
+        KeyCode::Char('q') => {
+            // Quit
+            return Ok(true);
+        }
+        _ => {}
+    }
     Ok(false)
+}
+
+async fn handle_sidebar_key(app: &mut App, key: KeyEvent) -> Result<bool> {
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.sidebar.move_up();
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.sidebar.move_down();
+        }
+        KeyCode::Char(' ') => {
+            app.sidebar.toggle_selected(&mut app.panes);
+        }
+        KeyCode::Enter => {
+            // Toggle visibility and focus the pane
+            if let Some(pane_id) = app.sidebar.selected_pane_id() {
+                // Make visible
+                if let Some(pane) = app.panes.iter_mut().find(|p| p.id == pane_id) {
+                    pane.visible = true;
+                }
+                // Focus it
+                for pane in &mut app.panes {
+                    pane.focused = pane.id == pane_id;
+                }
+                // Switch to main area
+                app.sidebar.focused = false;
+            }
+        }
+        KeyCode::Left | KeyCode::Char('h') => {
+            app.sidebar.collapse_selected();
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            app.sidebar.expand_selected();
+        }
+        KeyCode::Char('a') => {
+            app.sidebar.select_all(&mut app.panes);
+        }
+        KeyCode::Char('n') => {
+            app.sidebar.select_none(&mut app.panes);
+        }
+        KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
+            // Quick toggle: show only pane N
+            let idx = c.to_digit(10).unwrap() as usize - 1;
+            app.show_only_pane(idx);
+        }
+        _ => {}
+    }
+    Ok(false)
+}
+
+async fn handle_pane_key(app: &mut App, key: KeyEvent) -> Result<bool> {
+    match key.code {
+        KeyCode::Up => app.focus_direction(Direction::Up),
+        KeyCode::Down => app.focus_direction(Direction::Down),
+        KeyCode::Left => app.focus_direction(Direction::Left),
+        KeyCode::Right => app.focus_direction(Direction::Right),
+        KeyCode::PageUp => {
+            if let Some(pane) = app.focused_pane_mut() {
+                pane.output_buffer.scroll_up(10);
+            }
+        }
+        KeyCode::PageDown => {
+            if let Some(pane) = app.focused_pane_mut() {
+                pane.output_buffer.scroll_down(10);
+            }
+        }
+        KeyCode::Home => {
+            if let Some(pane) = app.focused_pane_mut() {
+                pane.output_buffer.scroll_offset = pane.output_buffer.lines.len();
+            }
+        }
+        KeyCode::End => {
+            if let Some(pane) = app.focused_pane_mut() {
+                pane.output_buffer.scroll_to_bottom();
+            }
+        }
+        _ => {
+            // Pass through to PTY
+            if let Some(pane) = app.focused_pane_mut() {
+                send_key_to_pane(pane, key)?;
+            }
+        }
+    }
+    Ok(false)
+}
+```
+
+### Focus Navigation in Main Area
+
+```rust
+impl App {
+    /// Move focus in the given direction among visible panes
+    pub fn focus_direction(&mut self, direction: Direction) {
+        let visible: Vec<usize> = self.panes.iter()
+            .enumerate()
+            .filter(|(_, p)| p.visible)
+            .map(|(i, _)| i)
+            .collect();
+
+        if visible.is_empty() {
+            return;
+        }
+
+        // Find currently focused pane index
+        let current_idx = visible.iter()
+            .position(|&i| self.panes[i].focused)
+            .unwrap_or(0);
+
+        // Calculate grid position based on layout
+        let cols = if visible.len() <= 2 { visible.len() } else { 2 };
+        let rows = (visible.len() + cols - 1) / cols;
+
+        let current_row = current_idx / cols;
+        let current_col = current_idx % cols;
+
+        let (new_row, new_col) = match direction {
+            Direction::Up => (current_row.saturating_sub(1), current_col),
+            Direction::Down => ((current_row + 1).min(rows - 1), current_col),
+            Direction::Left => (current_row, current_col.saturating_sub(1)),
+            Direction::Right => (current_row, (current_col + 1).min(cols - 1)),
+        };
+
+        let new_idx = (new_row * cols + new_col).min(visible.len() - 1);
+
+        // Update focus
+        for (i, pane) in self.panes.iter_mut().enumerate() {
+            pane.focused = i == visible[new_idx];
+        }
+    }
 }
 ```
 
@@ -1164,54 +2073,153 @@ enum ServerMessage {
 
 ### Phase 1: Core TUI (MVP)
 
-1. Config parsing
-2. PTY spawning for claude/codex
-3. Basic TUI with pane rendering
-4. Default layout only
-5. Input passthrough to focused pane
-6. `hive up` and `hive stop` commands
-7. Basic keybindings (focus, quit)
+**Goal**: Basic working TUI that can display and interact with panes
 
-**Deliverable**: Can start hive, see panes, interact with agents
+1. **Config parsing** (`src/config/`)
+   - Parse `.hive.yaml` into `HiveConfig` struct
+   - Validate required fields
+   - Support both architect/workers backend config
 
-### Phase 2: Task Integration
+2. **PTY spawning** (`src/pty/`)
+   - Spawn claude/codex processes with correct args
+   - Read output into buffer
+   - Write input to PTY
+   - Handle process exit
 
-1. YAML task file parsing
-2. File watching with notify
-3. Task counts in status bar
-4. Nudge command (`Ctrl+B n`)
-5. `hive nudge` CLI command
+3. **Basic UI** (`src/ui/`)
+   - Main layout with single pane (no sidebar yet)
+   - Pane border with title
+   - Output rendering
+   - Status bar (basic)
 
-**Deliverable**: Auto-nudging works, task status visible
+4. **Core app loop** (`src/app/`)
+   - Event loop (keyboard + PTY output)
+   - Focus management (single pane for now)
+   - Quit handling
 
-### Phase 3: Layout System
+5. **CLI** (`src/main.rs`)
+   - `hive up` - start TUI
+   - `hive stop` - kill running session
 
-1. Custom layout mode (tabs)
-2. Layout switching (`Ctrl+B l`)
-3. Window configuration from .hive.yaml
-4. `hive layout` CLI command
+**Deliverable**: Can start hive, see architect pane, type and see output
 
-**Deliverable**: Can switch between default/custom layouts
+### Phase 2: Sidebar & Multi-Pane
 
-### Phase 4: Polish
+**Goal**: IDE-like sidebar with visibility toggles
 
-1. GitHub Projects support
-2. Help overlay
-3. Pane scrolling
-4. Zoom mode
-5. Better status bar
-6. `hive init` in Rust
-7. `hive doctor` in Rust
-8. `hive status` CLI command
+1. **Sidebar data structure** (`src/ui/sidebar.rs`)
+   - `SidebarItem` enum (Pane, Group)
+   - Build tree from config (group worktrees)
+   - Selection state
+   - Expand/collapse state
+
+2. **Sidebar rendering**
+   - Tree view with icons (●/○/▶/▼)
+   - Selection highlighting
+   - Indentation for children
+   - Group headers with counts
+
+3. **Visibility toggle**
+   - Space to toggle item/group
+   - 'a' to select all, 'n' to select none
+   - Enter to toggle + focus
+
+4. **Multi-pane main area**
+   - Dynamic grid layout based on visible count
+   - Layout calculation algorithm
+   - Focus navigation with arrow keys
+
+5. **Tab switching**
+   - Tab key switches sidebar ↔ main area
+   - Focus indication (border color)
+
+**Deliverable**: Can toggle which panes are visible, navigate with sidebar
+
+### Phase 3: Task Integration
+
+**Goal**: Auto-nudging and task status display
+
+1. **YAML task source** (`src/tasks/yaml.rs`)
+   - Parse tasks.yaml format
+   - Count backlog/in_progress per lane
+   - Reload on change
+
+2. **File watching** (`src/tasks/watcher.rs`)
+   - Use `notify` crate
+   - Debouncing (10 second minimum)
+   - Settle time (5 seconds after change)
+
+3. **Nudge system** (`src/commands/nudge.rs`)
+   - Build nudge message with template vars
+   - Send to PTY stdin
+   - Track last nudge time per lane
+
+4. **Status bar improvements**
+   - Show task counts per lane
+   - Show "Watching" indicator
+   - Show visible/total pane count
+
+5. **Keybindings**
+   - `Ctrl+B n` nudge all
+   - `Ctrl+B N` nudge focused
+
+**Deliverable**: Tasks show in status bar, auto-nudging works
+
+### Phase 4: Polish & Features
+
+**Goal**: Full feature set with good UX
+
+1. **GitHub Projects support** (`src/tasks/github.rs`)
+   - GraphQL query for project items
+   - Parse Lane/Status fields
+   - Polling with cache
+
+2. **Help overlay**
+   - `Ctrl+B ?` to toggle
+   - All keybindings documented
+   - Symbol legend
+
+3. **Scrollback**
+   - Page Up/Down to scroll
+   - Home/End for top/bottom
+   - Scroll indicator in pane
+
+4. **Zoom mode**
+   - `Ctrl+B z` to maximize focused pane
+   - Press again to restore
+
+5. **Additional CLI commands**
+   - `hive status` - print status to stdout
+   - `hive nudge [worker]` - CLI nudge
+   - `hive init` - interactive setup (can use dialoguer)
+   - `hive doctor` - check/fix issues
+   - `hive role` - generate role files
 
 **Deliverable**: Feature parity with bash version
 
 ### Phase 5: Server Mode (Optional)
 
-1. Client/server architecture
-2. Detach/attach
-3. `hive attach` command
-4. Session persistence
+**Goal**: Detach/attach like tmux
+
+1. **Server architecture**
+   - Unix socket for IPC
+   - Server manages PTYs
+   - Client renders TUI
+
+2. **Protocol**
+   - ClientMessage enum (Input, Resize, Nudge, Detach)
+   - ServerMessage enum (Output, State, PaneExited)
+   - Serialization with serde
+
+3. **Commands**
+   - `hive up --daemon` - start server only
+   - `hive attach` - attach client to server
+   - `Ctrl+B d` - detach client
+
+4. **Session persistence**
+   - Server continues when client detaches
+   - State recovery on attach
+   - PID file for session tracking
 
 **Deliverable**: Can detach and reattach like tmux
 

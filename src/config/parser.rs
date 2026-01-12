@@ -23,6 +23,9 @@ pub struct ArchitectConfig {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct WorkersConfig {
     pub backend: Backend,
+    /// Skip all permission prompts (Claude: --dangerously-skip-permissions)
+    #[serde(default)]
+    pub skip_permissions: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy)]

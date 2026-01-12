@@ -26,7 +26,7 @@ pub fn render_pane(
 
     let mut title = match &pane.pane_type {
         PaneType::Architect => "architect".to_string(),
-        PaneType::Worker { lane } => format!("{} ({})", pane.id, lane),
+        PaneType::Worker { lane } => lane.clone(),
     };
     let scroll_offset = pane.output_buffer.scroll_offset();
     if scroll_offset > 0 {

@@ -22,6 +22,12 @@ use crate::projects;
 use crate::ui;
 
 pub fn run(start_dir: &Path) -> Result<()> {
+    // First check for workspace
+    if let Ok(Some(workspace)) = crate::workspace::resolve::find_workspace_for_path(start_dir) {
+        return run_workspace(&workspace.dir);
+    }
+
+    // Fall back to legacy .hive.yaml
     let config_path = config::find_config(start_dir)?;
     let project_dir = config::project_dir(&config_path);
     let socket_path = project_dir.join(".hive").join("hive.sock");
@@ -35,6 +41,30 @@ pub fn run(start_dir: &Path) -> Result<()> {
         Vec::<ClientPane>::new(),
         Vec::<AppWindow>::new(),
         project_dir.clone(),
+    );
+
+    setup_terminal()?;
+    let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
+
+    let result = run_tui(&mut terminal, &mut app, &mut conn, &log_path);
+
+    cleanup_terminal()?;
+    result
+}
+
+/// Attach to a workspace server
+pub fn run_workspace(workspace_dir: &Path) -> Result<()> {
+    let socket_path = workspace_dir.join("hive.sock");
+    let log_path = workspace_dir.join("client.log");
+    let _ = std::fs::write(&log_path, "");
+
+    let mut conn = ClientConn::connect(socket_path, &log_path)?;
+
+    let mut app = App::new(
+        crate::config::Backend::Claude,
+        Vec::<ClientPane>::new(),
+        Vec::<AppWindow>::new(),
+        workspace_dir.to_path_buf(),
     );
 
     setup_terminal()?;
@@ -141,38 +171,68 @@ fn run_tui(
     let mut last_tick = Instant::now();
     let mut last_sizes: Vec<PaneSize> = Vec::new();
     let mut pending_output: HashMap<String, Vec<u8>> = HashMap::new();
+    let mut cached_size = (80u16, 24u16); // Fallback size (width, height)
 
     loop {
-        terminal.draw(|frame| ui::render(frame, app))?;
+        if let Err(e) = terminal.draw(|frame| ui::render(frame, app)) {
+            log_line(log_path, &format!("draw error: {}", e));
+            // Continue - don't crash on draw errors
+        }
+
+        // Calculate workers_per_page based on terminal size
+        // Use cached size if query fails (cursor position timeout)
+        let (width, height) = match terminal.size() {
+            Ok(size) => {
+                cached_size = (size.width, size.height);
+                (size.width, size.height)
+            }
+            Err(e) => {
+                log_line(log_path, &format!("size error: {}", e));
+                cached_size
+            }
+        };
+        let rect = Rect::new(0, 0, width, height);
+        let body = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(0), Constraint::Length(1)])
+            .split(rect)[1];
+        let pane_area = if app.sidebar.visible {
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Length(24), Constraint::Min(0)])
+                .split(body)[1]
+        } else {
+            body
+        };
+
+        let has_architect = app.panes.iter().any(|p| {
+            p.visible && matches!(p.pane_type, crate::app::types::PaneType::Architect)
+        });
+        let workers_per_page = crate::ui::layout::calculate_workers_per_page(pane_area, has_architect);
+
+        // Clamp page if terminal resized
+        app.clamp_worker_page(workers_per_page);
+
+        // Minimum PTY size - Codex needs larger minimums due to TUI caching issues
+        let (min_pty_rows, min_pty_cols) = match app.backend {
+            crate::config::Backend::Codex => (16, 60),
+            crate::config::Backend::Claude => (8, 40),
+        };
 
         if !app.panes.is_empty() {
-            let area = terminal.size()?;
-            let rect = Rect::new(0, 0, area.width, area.height);
-            let body = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Length(1), Constraint::Min(0), Constraint::Length(1)])
-                .split(rect)[1];
-            let pane_area = if app.sidebar.visible {
-                Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([Constraint::Length(24), Constraint::Min(0)])
-                    .split(body)[1]
-            } else {
-                body
-            };
-            let layout = crate::ui::layout::calculate_layout(app, pane_area);
+            let layout = crate::ui::layout::calculate_layout(app, pane_area, workers_per_page);
             let sizes: Vec<PaneSize> = layout
                 .iter()
                 .map(|(idx, rect)| PaneSize {
                     pane_id: app.panes[*idx].id.clone(),
-                    rows: rect.height.saturating_sub(2).max(1),
-                    cols: rect.width.saturating_sub(2).max(1),
+                    rows: rect.height.saturating_sub(2).max(min_pty_rows),
+                    cols: rect.width.saturating_sub(2).max(min_pty_cols),
                 })
                 .collect();
             if sizes != last_sizes {
                 for (idx, rect) in &layout {
-                    let rows = rect.height.saturating_sub(2).max(1);
-                    let cols = rect.width.saturating_sub(2).max(1);
+                    let rows = rect.height.saturating_sub(2).max(min_pty_rows);
+                    let cols = rect.width.saturating_sub(2).max(min_pty_cols);
                     if let Some(pane) = app.panes.get_mut(*idx) {
                         pane.output_buffer.resize(rows, cols);
                     }
@@ -216,11 +276,26 @@ fn run_tui(
             }
         }
 
-        if event::poll(Duration::from_millis(50))? {
-            if let Event::Key(key) = event::read()? {
-                if handle_key_event(app, conn, key)? {
-                    break;
+        // Handle events with graceful error recovery
+        match event::poll(Duration::from_millis(50)) {
+            Ok(true) => {
+                match event::read() {
+                    Ok(Event::Key(key)) => {
+                        if handle_key_event(app, conn, key, workers_per_page)? {
+                            break;
+                        }
+                    }
+                    Ok(_) => {} // Ignore non-key events
+                    Err(e) => {
+                        log_line(log_path, &format!("event read error: {}", e));
+                        // Continue - don't crash on event read errors
+                    }
                 }
+            }
+            Ok(false) => {} // No event
+            Err(e) => {
+                log_line(log_path, &format!("event poll error: {}", e));
+                // Continue - don't crash on poll errors
             }
         }
 
@@ -236,7 +311,7 @@ fn run_tui(
     Ok(())
 }
 
-fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent) -> Result<bool> {
+fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent, workers_per_page: usize) -> Result<bool> {
     if app.show_help {
         if matches!(key.code, KeyCode::Esc | KeyCode::Char('?')) {
             app.show_help = false;
@@ -312,11 +387,71 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent) -> Resu
                             crate::app::palette::PaletteAction::ToggleHelp => {
                                 app.show_help = !app.show_help;
                             }
-                            crate::app::palette::PaletteAction::Quit => return Ok(true),
+                            crate::app::palette::PaletteAction::Detach => {
+                                conn.send(ClientMessage::Detach)?;
+                                return Ok(true);
+                            }
+                            crate::app::palette::PaletteAction::Kill => {
+                                conn.send(ClientMessage::Shutdown)?;
+                                return Ok(true);
+                            }
                         }
                     }
                 }
                 app.show_palette = false;
+            }
+            KeyCode::Char(c) if c >= '1' && c <= '9' && !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Number shortcuts: 1-9 select items directly
+                let idx = (c as usize) - ('1' as usize);
+                if let Some(item_idx) = filtered.get(idx) {
+                    if let Some(item) = items.get(*item_idx) {
+                        match item.action.clone() {
+                            crate::app::palette::PaletteAction::FocusNext => app.focus_next(&visible),
+                            crate::app::palette::PaletteAction::FocusPrev => app.focus_prev(&visible),
+                            crate::app::palette::PaletteAction::FocusPane(pane_idx) => {
+                                app.focused_pane = pane_idx
+                            }
+                            crate::app::palette::PaletteAction::ToggleZoom => app.toggle_zoom(),
+                            crate::app::palette::PaletteAction::ToggleSidebar => {
+                                app.sidebar.visible = !app.sidebar.visible;
+                                if !app.sidebar.visible {
+                                    app.sidebar.focused = false;
+                                }
+                            }
+                            crate::app::palette::PaletteAction::FocusSidebar => {
+                                if app.sidebar.visible {
+                                    app.sidebar.focused = true;
+                                    app.nav_mode = false;
+                                }
+                            }
+                            crate::app::palette::PaletteAction::ProjectManager => {
+                                open_project_manager(app)?;
+                            }
+                            crate::app::palette::PaletteAction::NudgeAll => {
+                                conn.send(ClientMessage::Nudge { worker: None })?;
+                            }
+                            crate::app::palette::PaletteAction::NudgeFocused => {
+                                if let Some(pane) = app.panes.get(app.focused_pane) {
+                                    conn.send(ClientMessage::Nudge {
+                                        worker: Some(pane.id.clone()),
+                                    })?;
+                                }
+                            }
+                            crate::app::palette::PaletteAction::ToggleHelp => {
+                                app.show_help = !app.show_help;
+                            }
+                            crate::app::palette::PaletteAction::Detach => {
+                                conn.send(ClientMessage::Detach)?;
+                                return Ok(true);
+                            }
+                            crate::app::palette::PaletteAction::Kill => {
+                                conn.send(ClientMessage::Shutdown)?;
+                                return Ok(true);
+                            }
+                        }
+                        app.show_palette = false;
+                    }
+                }
             }
             KeyCode::Char(c) => {
                 if !key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -330,7 +465,7 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent) -> Resu
         return Ok(false);
     }
 
-    if app.sidebar.focused && app.sidebar.visible {
+    if app.sidebar.focused && app.sidebar.visible && !key.modifiers.contains(KeyModifiers::CONTROL) {
         match key.code {
             KeyCode::Esc => {
                 app.sidebar.focused = false;
@@ -417,10 +552,15 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent) -> Resu
                 }
             }
             KeyCode::Enter => app.nav_mode = false,
-            KeyCode::Char('q') => return Ok(true),
-            KeyCode::Char('d') => {
+            KeyCode::Char('d') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 conn.send(ClientMessage::Detach)?;
                 return Ok(true);
+            }
+            KeyCode::Char('[') => {
+                app.prev_worker_page();
+            }
+            KeyCode::Char(']') => {
+                app.next_worker_page(workers_per_page);
             }
             KeyCode::PageUp => {
                 if let Some(pane) = app.panes.get_mut(app.focused_pane) {
@@ -430,6 +570,16 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent) -> Resu
             KeyCode::PageDown => {
                 if let Some(pane) = app.panes.get_mut(app.focused_pane) {
                     pane.output_buffer.scroll_down(10);
+                }
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(pane) = app.panes.get_mut(app.focused_pane) {
+                    pane.output_buffer.scroll_up(15);
+                }
+            }
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(pane) = app.panes.get_mut(app.focused_pane) {
+                    pane.output_buffer.scroll_down(15);
                 }
             }
             KeyCode::Home => {
@@ -447,12 +597,59 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent) -> Resu
         return Ok(false);
     }
 
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('g') {
-        app.nav_mode = !app.nav_mode;
+    // Sidebar reordering with Ctrl+U/D (only when sidebar focused)
+    if app.sidebar.focused && app.sidebar.visible {
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('u') {
+            app.sidebar.reorder_up(&mut app.panes);
+            return Ok(false);
+        } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('d') {
+            app.sidebar.reorder_down(&mut app.panes);
+            return Ok(false);
+        }
+    }
+
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('h') {
+        // Focus previous pane
+        app.focus_prev(&visible);
+    } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('j') {
+        // Focus next pane
+        app.focus_next(&visible);
+    } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('l') {
+        // Focus next pane
+        app.focus_next(&visible);
     } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('k') {
         app.show_palette = true;
         app.palette_query.clear();
         app.palette_selection = 0;
+    } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('o') {
+        // Toggle sidebar (and focus it when opening)
+        app.sidebar.visible = !app.sidebar.visible;
+        if app.sidebar.visible {
+            app.sidebar.focused = true;
+        } else {
+            app.sidebar.focused = false;
+        }
+    } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('d') {
+        // Detach from session
+        conn.send(ClientMessage::Detach)?;
+        return Ok(true);
+    } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {
+        // Open pane picker (palette filtered to panes)
+        app.show_palette = true;
+        app.palette_query = ">".to_string(); // Filter prefix for panes
+        app.palette_selection = 0;
+    } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('z') {
+        // Toggle zoom on focused pane
+        app.toggle_zoom();
+    } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s') {
+        // Toggle smart mode (only show active panes)
+        app.smart_mode = !app.smart_mode;
+    } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('[') {
+        // Previous page of workers
+        app.prev_worker_page();
+    } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char(']') {
+        // Next page of workers
+        app.next_worker_page(workers_per_page);
     } else {
         let bytes = key_to_bytes(key);
         if !bytes.is_empty() {

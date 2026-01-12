@@ -8,3 +8,4 @@ pub mod pty;
 pub mod tasks;
 pub mod ui;
 pub mod utils;
+pub mod workspace;

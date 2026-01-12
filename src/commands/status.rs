@@ -4,8 +4,15 @@ use anyhow::Result;
 
 use crate::config::{self, TaskSource};
 use crate::tasks::{counts_for_lane, load_tasks};
+use crate::workspace::resolve::find_workspace_for_path;
 
 pub fn run(start_dir: &Path) -> Result<()> {
+    // First check for workspace
+    if let Ok(Some(workspace)) = find_workspace_for_path(start_dir) {
+        return run_workspace_status(&workspace);
+    }
+
+    // Fall back to legacy .hive.yaml
     let config_path = config::find_config(start_dir)?;
     let config = config::load_config(&config_path)?;
 
@@ -37,6 +44,30 @@ pub fn run(start_dir: &Path) -> Result<()> {
         }
     } else {
         println!("\nGitHub task source status not implemented yet.");
+    }
+
+    Ok(())
+}
+
+fn run_workspace_status(workspace: &crate::workspace::resolve::WorkspaceMeta) -> Result<()> {
+    let socket_path = workspace.dir.join("hive.sock");
+    let status = if socket_path.exists() { "RUNNING" } else { "STOPPED" };
+
+    println!("Workspace: {}", workspace.name);
+    println!("Backend: {:?}", workspace.config.workers.backend);
+    println!("Status: {}", status);
+    println!("Projects: {}", workspace.config.projects.len());
+    println!("Total Workers: {}", workspace.config.total_workers());
+
+    println!("\nPROJECT                         WORKERS   LANES");
+    println!("-------                         -------   -----");
+
+    for project in &workspace.config.projects {
+        let name = project.path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        let lanes = project.lanes.join(", ");
+        println!("{:<30} {:<8} {}", name, project.workers, lanes);
     }
 
     Ok(())

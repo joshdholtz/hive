@@ -49,6 +49,7 @@ pub enum ClientMessage {
     SetVisibility { pane_id: String, visible: bool },
     Layout { mode: LayoutMode },
     Detach,
+    Shutdown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

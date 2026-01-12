@@ -65,6 +65,8 @@ pub struct App {
     pub running: bool,
     pub task_counts: HashMap<String, TaskCounts>,
     pub zoomed: bool,
+    pub worker_page: usize,
+    pub smart_mode: bool,
 }
 
 impl App {
@@ -99,6 +101,59 @@ impl App {
             running: true,
             task_counts: HashMap::new(),
             zoomed: false,
+            worker_page: 0,
+            smart_mode: false,
+        }
+    }
+
+    /// Check if a pane has work (tasks in progress or backlog)
+    pub fn pane_has_work(&self, pane_idx: usize) -> bool {
+        if let Some(pane) = self.panes.get(pane_idx) {
+            // Get the lane name for this pane
+            if let Some(lane) = &pane.lane {
+                if let Some(counts) = self.task_counts.get(lane) {
+                    return counts.in_progress > 0 || counts.backlog > 0;
+                }
+            }
+        }
+        false
+    }
+
+    pub fn visible_worker_count(&self) -> usize {
+        self.panes
+            .iter()
+            .filter(|p| p.visible && !matches!(p.pane_type, PaneType::Architect))
+            .count()
+    }
+
+    pub fn total_worker_pages(&self, workers_per_page: usize) -> usize {
+        if workers_per_page == 0 {
+            return 1;
+        }
+        let visible = self.visible_worker_count();
+        if visible == 0 {
+            return 1;
+        }
+        (visible + workers_per_page - 1) / workers_per_page
+    }
+
+    pub fn next_worker_page(&mut self, workers_per_page: usize) {
+        let total = self.total_worker_pages(workers_per_page);
+        if self.worker_page + 1 < total {
+            self.worker_page += 1;
+        }
+    }
+
+    pub fn prev_worker_page(&mut self) {
+        if self.worker_page > 0 {
+            self.worker_page -= 1;
+        }
+    }
+
+    pub fn clamp_worker_page(&mut self, workers_per_page: usize) {
+        let total = self.total_worker_pages(workers_per_page);
+        if self.worker_page >= total {
+            self.worker_page = total.saturating_sub(1);
         }
     }
 

@@ -21,10 +21,98 @@ use crate::ipc::{
 use crate::pty::{spawn_agent, spawn_reader_thread, Pane, PaneEvent};
 use crate::tasks::{counts_for_lane, load_tasks, spawn_yaml_watcher, NudgeRequest};
 use crate::utils::{git, shell};
+use crate::workspace::{expand_workers, WorkspaceConfig};
 
 const ARCHITECT_MESSAGE: &str = "Read .hive/ARCHITECT.md. You are the architect - plan tasks but do NOT edit code. Add tasks to the tasks file for workers to pick up.";
 
 pub fn run(config_path: &Path) -> Result<()> {
+    // Detect if this is a workspace.yaml or legacy .hive.yaml
+    let file_name = config_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+
+    if file_name == "workspace.yaml" {
+        run_workspace(config_path)
+    } else {
+        run_legacy(config_path)
+    }
+}
+
+/// Run server for a workspace (workspace.yaml)
+fn run_workspace(config_path: &Path) -> Result<()> {
+    let workspace_dir = config_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Invalid workspace path"))?
+        .to_path_buf();
+
+    let config = WorkspaceConfig::load(&workspace_dir)?;
+    let workers = expand_workers(&config, &workspace_dir);
+
+    let layout_mode = load_layout_mode(&workspace_dir).unwrap_or(LayoutMode::Default);
+
+    let (panes, windows) = spawn_workspace_panes(&config, &workspace_dir, &workers)?;
+
+    let (event_tx, event_rx) = mpsc::channel::<ServerEvent>();
+    let (pane_tx, pane_rx) = mpsc::channel::<PaneEvent>();
+
+    for pane in &panes {
+        let reader = pane
+            .master
+            .try_clone_reader()
+            .context("Failed to clone PTY reader")?;
+        spawn_reader_thread(pane.id.clone(), reader, pane_tx.clone());
+    }
+
+    let (nudge_tx, nudge_rx) = mpsc::channel::<NudgeRequest>();
+
+    // Watch tasks file
+    let tasks_path = workspace_dir.join("tasks.yaml");
+    if tasks_path.exists() {
+        spawn_yaml_watcher(
+            tasks_path.clone(),
+            nudge_tx.clone(),
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+        )
+        .ok();
+    }
+
+    let socket_path = workspace_dir.join("hive.sock");
+    prepare_socket(&socket_path)?;
+
+    let listener = UnixListener::bind(&socket_path)
+        .with_context(|| format!("Failed to bind {}", socket_path.display()))?;
+    listener.set_nonblocking(true)?;
+
+    let log_path = workspace_dir.join("server.log");
+    let _ = std::fs::write(&log_path, "");
+
+    // Create a minimal HiveConfig for compatibility
+    let compat_config = create_compat_config(&config, &workers);
+
+    let state = ServerState {
+        config: compat_config,
+        project_dir: workspace_dir.clone(),
+        panes,
+        windows,
+        layout_mode,
+        task_counts: HashMap::new(),
+        tasks_file: Some(tasks_path),
+        log_path,
+    };
+
+    write_workspace_pid(&workspace_dir)?;
+
+    let result = event_loop(state, listener, event_rx, pane_rx, event_tx, nudge_rx);
+
+    cleanup_socket(&socket_path).ok();
+
+    result
+}
+
+/// Run server for legacy .hive.yaml configuration
+fn run_legacy(config_path: &Path) -> Result<()> {
     let config = config::load_config(config_path)?;
     config::validate(&config)?;
     let project_dir = config::project_dir(config_path);
@@ -176,6 +264,17 @@ fn event_loop(
             match event {
                 PaneEvent::Output { pane_id, data } => {
                     log_line(&state.log_path, &format!("pane-output {} bytes={}", pane_id, data.len()));
+
+                    // Detect cursor position query (ESC[6n) and auto-respond
+                    // This fixes codex which queries cursor position and times out
+                    if crate::pty::contains_cursor_query(&data) {
+                        if let Some(pane) = state.panes.iter_mut().find(|p| p.id == pane_id) {
+                            // Respond with cursor at position 1,1
+                            let _ = pane.writer.write_all(b"\x1b[1;1R");
+                            let _ = pane.writer.flush();
+                        }
+                    }
+
                     if let Some(pane) = state.panes.iter_mut().find(|p| p.id == pane_id) {
                         pane.output_buffer.push_bytes(&data);
                         pane.push_history(&data);
@@ -213,7 +312,10 @@ fn event_loop(
                 }
                 ServerEvent::ClientMessage { client_id, message } => {
                     log_line(&state.log_path, &format!("client-message {}", client_id));
-                    handle_client_message(&mut state, &mut clients, message);
+                    if handle_client_message(&mut state, &mut clients, message) {
+                        log_line(&state.log_path, "shutdown-requested");
+                        break;
+                    }
                 }
                 ServerEvent::ClientDisconnected { client_id } => {
                     log_line(&state.log_path, &format!("client-disconnected {}", client_id));
@@ -284,7 +386,7 @@ fn handle_client_message(
     state: &mut ServerState,
     clients: &mut Vec<ClientHandle>,
     message: ClientMessage,
-) {
+) -> bool {
     match message {
         ClientMessage::Input { pane_id, data } => {
             if let Some(pane) = state.panes.iter_mut().find(|p| p.id == pane_id) {
@@ -313,7 +415,11 @@ fn handle_client_message(
             broadcast_state(state, clients);
         }
         ClientMessage::Detach => {}
+        ClientMessage::Shutdown => {
+            return true;
+        }
     }
+    false
 }
 
 fn resize_pane(state: &mut ServerState, pane: PaneSize) {
@@ -327,13 +433,155 @@ fn resize_pane(state: &mut ServerState, pane: PaneSize) {
     }
 }
 
+/// Spawn panes for a workspace configuration
+fn spawn_workspace_panes(
+    config: &WorkspaceConfig,
+    workspace_dir: &Path,
+    workers: &[crate::workspace::RuntimeWorker],
+) -> Result<(Vec<Pane>, Vec<AppWindow>)> {
+    let mut panes = Vec::new();
+    let mut windows = Vec::new();
+
+    // Architect pane
+    let architect_message = format!(
+        "Read {}/ARCHITECT.md. You are the architect - plan tasks but do NOT write code.",
+        workspace_dir.display()
+    );
+
+    let (arch_master, arch_child, arch_writer) =
+        spawn_agent(config.architect.backend, &architect_message, workspace_dir, false)?;
+
+    panes.push(Pane {
+        id: "architect".to_string(),
+        pane_type: PaneType::Architect,
+        master: arch_master,
+        child: arch_child,
+        writer: arch_writer,
+        output_buffer: crate::pty::output::OutputBuffer::new(24, 80, 2000),
+        raw_history: std::collections::VecDeque::new(),
+        raw_history_max: 200_000,
+        lane: None,
+        working_dir: workspace_dir.to_path_buf(),
+        branch: None,
+        group: None,
+        visible: true,
+    });
+
+    windows.push(AppWindow {
+        name: "Architect".to_string(),
+        layout: LayoutKind::EvenHorizontal,
+        pane_indices: vec![0],
+    });
+
+    // Worker panes
+    let mut worker_pane_indices = Vec::new();
+
+    for worker in workers {
+        let lane_role_path = workspace_dir.join("lanes").join(&worker.lane).join("WORKER.md");
+        let startup_message = format!(
+            "Read {}. Your lane is '{}'. Check {}/tasks.yaml for your tasks.",
+            lane_role_path.display(),
+            worker.lane,
+            workspace_dir.display()
+        );
+
+        // Group by project
+        let group = worker.project_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_string());
+
+        let (master, child, writer) =
+            spawn_agent(config.workers.backend, &startup_message, &worker.working_dir, config.workers.skip_permissions)?;
+
+        let pane = Pane {
+            id: worker.id.clone(),
+            pane_type: PaneType::Worker { lane: worker.lane.clone() },
+            master,
+            child,
+            writer,
+            output_buffer: crate::pty::output::OutputBuffer::new(24, 80, 2000),
+            raw_history: std::collections::VecDeque::new(),
+            raw_history_max: 200_000,
+            lane: Some(worker.lane.clone()),
+            working_dir: worker.working_dir.clone(),
+            branch: None,
+            group,
+            visible: true,
+        };
+
+        panes.push(pane);
+        worker_pane_indices.push(panes.len() - 1);
+    }
+
+    windows.push(AppWindow {
+        name: "Workers".to_string(),
+        layout: LayoutKind::EvenHorizontal,
+        pane_indices: worker_pane_indices,
+    });
+
+    Ok((panes, windows))
+}
+
+/// Create a compatibility HiveConfig from WorkspaceConfig
+fn create_compat_config(
+    config: &WorkspaceConfig,
+    workers: &[crate::workspace::RuntimeWorker],
+) -> HiveConfig {
+    use crate::config::{ArchitectConfig, TasksConfig, TaskSource, WindowConfig, WorkerConfig, WorkersConfig};
+
+    let worker_configs: Vec<WorkerConfig> = workers
+        .iter()
+        .map(|w| WorkerConfig {
+            id: w.id.clone(),
+            dir: Some(w.working_dir.to_string_lossy().to_string()),
+            lane: Some(w.lane.clone()),
+            branch: None,
+        })
+        .collect();
+
+    HiveConfig {
+        architect: ArchitectConfig {
+            backend: config.architect.backend,
+        },
+        workers: WorkersConfig {
+            backend: config.workers.backend,
+            skip_permissions: config.workers.skip_permissions,
+        },
+        session: config.name.clone(),
+        tasks: TasksConfig {
+            source: TaskSource::Yaml,
+            file: Some("tasks.yaml".to_string()),
+            github_org: None,
+            github_project: None,
+            github_project_id: None,
+            github_status_field_id: None,
+            github_lane_field_id: None,
+        },
+        windows: vec![WindowConfig {
+            name: "Workers".to_string(),
+            layout: Some("even-horizontal".to_string()),
+            workers: worker_configs,
+        }],
+        setup: None,
+        messages: None,
+        worker_instructions: None,
+    }
+}
+
+fn write_workspace_pid(workspace_dir: &Path) -> Result<()> {
+    let pid_path = workspace_dir.join("hive.pid");
+    std::fs::write(pid_path, std::process::id().to_string())?;
+    Ok(())
+}
+
 fn spawn_panes(config: &HiveConfig, project_dir: &Path) -> Result<(Vec<Pane>, Vec<AppWindow>)> {
     let mut panes = Vec::new();
     let mut windows = Vec::new();
     let group_counts = build_group_counts(config, project_dir);
 
     let (arch_master, arch_child, arch_writer) =
-        spawn_agent(config.architect.backend, ARCHITECT_MESSAGE, project_dir)?;
+        spawn_agent(config.architect.backend, ARCHITECT_MESSAGE, project_dir, false)?;
 
     panes.push(Pane {
         id: "architect".to_string(),
@@ -368,7 +616,7 @@ fn spawn_panes(config: &HiveConfig, project_dir: &Path) -> Result<(Vec<Pane>, Ve
             let group = group_for_dir(&working_dir, project_dir, &group_counts);
 
             let (master, child, writer) =
-                spawn_agent(config.workers.backend, &startup_message, &working_dir)?;
+                spawn_agent(config.workers.backend, &startup_message, &working_dir, config.workers.skip_permissions)?;
 
             let pane = Pane {
                 id: worker.id.clone(),
@@ -455,7 +703,15 @@ fn nudge_workers(state: &mut ServerState, specific_worker: Option<&str>) -> Resu
 
         let counts = state.task_counts.get(&lane).copied().unwrap_or_default();
 
-        if counts.backlog > 0 && counts.in_progress == 0 {
+        // For automatic nudges (all workers): only nudge if backlog AND not busy
+        // For manual nudges (specific worker): nudge if backlog, even if busy
+        let should_nudge = if specific_worker.is_some() {
+            counts.backlog > 0
+        } else {
+            counts.backlog > 0 && counts.in_progress == 0
+        };
+
+        if should_nudge {
             let message = build_nudge_message(&state.config, &lane, counts.backlog, &pane.branch);
             crate::pty::send_to_pane(&mut pane.writer, &message)?;
             nudged.push(pane.id.clone());

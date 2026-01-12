@@ -9,217 +9,526 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 
-use crate::config::{
-    ArchitectConfig, Backend, HiveConfig, TasksConfig, TaskSource, WindowConfig, WorkerConfig,
-    WorkersConfig,
-};
-use crate::projects;
+use crate::config::{ArchitectConfig, Backend, WorkersConfig};
 use crate::tasks::yaml::{LaneTasks, TasksFile, WorkerProtocol};
+use crate::workspace::{create_worktrees, slug_from_path, WorkspaceConfig, WorkspaceProject};
+use crate::workspace::resolve::{create_workspace_dir, find_workspace_for_path};
 
+/// Run the workspace setup wizard
 pub fn run(start_dir: &Path) -> Result<PathBuf> {
-    let project_dir = start_dir.to_path_buf();
-    let config_path = project_dir.join(".hive.yaml");
-
-    if config_path.exists() {
-        return Ok(config_path);
+    // Check if this directory is already part of a workspace
+    if let Ok(Some(existing)) = find_workspace_for_path(start_dir) {
+        return Ok(existing.dir);
     }
 
-    let mut state = SetupState::new(&project_dir);
+    let mut state = SetupState::new(start_dir);
     setup_terminal()?;
     let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
 
-    let result = run_wizard(&mut terminal, &mut state, &project_dir, &config_path);
+    let result = run_wizard(&mut terminal, &mut state, start_dir);
 
     cleanup_terminal()?;
-    result?;
-
-    Ok(config_path)
+    result
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Step {
     Welcome,
+    ScanProjects,
+    SelectProjects,   // Select projects AND worker count per project
+    NameLanes,        // Name lanes only for projects with 2+ workers
     Backends,
-    Workers,
-    Registry,
     Confirm,
+    Creating,
     Done,
+}
+
+/// A discovered git repository
+#[derive(Debug, Clone)]
+struct DiscoveredProject {
+    name: String,
+    path: PathBuf,
+    selected: bool,
+    /// Number of workers (1-4)
+    workers: usize,
+    /// Lane names (filled in for multi-worker projects, auto-set for single-worker)
+    lanes: Vec<String>,
+}
+
+impl DiscoveredProject {
+    fn new(name: String, path: PathBuf) -> Self {
+        Self {
+            name: name.clone(),
+            path,
+            selected: false,
+            workers: 1,
+            lanes: vec![name], // Default lane name = project name
+        }
+    }
+
+    /// Returns true if this project needs lane naming (2+ workers)
+    fn needs_lane_naming(&self) -> bool {
+        self.workers > 1
+    }
 }
 
 struct SetupState {
     step: Step,
+    workspace_name: String,
+    start_dir: PathBuf,
+    discovered_projects: Vec<DiscoveredProject>,
+    /// Cursor for SelectProjects step (index into discovered_projects)
+    select_cursor: usize,
+    /// Which selected project we're configuring (0-based index into selected projects)
+    config_project_index: usize,
+    /// Cursor for lane selection within current project
+    lane_cursor: usize,
+    editing_lane: bool,
+    lane_input: String,
     architect_backend: Backend,
     workers_backend: Backend,
-    worker_count: usize,
-    add_to_registry: bool,
-    selection: usize,
-    project_name: String,
+    backend_selection: usize,
+    error_message: Option<String>,
 }
 
 impl SetupState {
-    fn new(project_dir: &Path) -> Self {
-        let project_name = project_dir
+    fn new(start_dir: &Path) -> Self {
+        let workspace_name = start_dir
             .file_name()
             .and_then(|name| name.to_str())
-            .unwrap_or("project")
+            .unwrap_or("workspace")
             .to_string();
+
         Self {
             step: Step::Welcome,
+            workspace_name,
+            start_dir: start_dir.to_path_buf(),
+            discovered_projects: Vec::new(),
+            select_cursor: 0,
+            config_project_index: 0,
+            lane_cursor: 0,
+            editing_lane: false,
+            lane_input: String::new(),
             architect_backend: Backend::Claude,
             workers_backend: Backend::Claude,
-            worker_count: 2,
-            add_to_registry: true,
-            selection: 0,
-            project_name,
+            backend_selection: 0,
+            error_message: None,
         }
+    }
+
+    fn selected_projects(&self) -> Vec<&DiscoveredProject> {
+        self.discovered_projects.iter().filter(|p| p.selected).collect()
+    }
+
+    fn projects_needing_lanes_count(&self) -> usize {
+        self.discovered_projects
+            .iter()
+            .filter(|p| p.selected && p.needs_lane_naming())
+            .count()
+    }
+
+    fn total_workers(&self) -> usize {
+        self.discovered_projects
+            .iter()
+            .filter(|p| p.selected)
+            .map(|p| p.workers)
+            .sum()
+    }
+
+    /// Get the current project needing lane naming (immutable)
+    fn current_lane_project(&self) -> Option<&DiscoveredProject> {
+        self.discovered_projects
+            .iter()
+            .filter(|p| p.selected && p.needs_lane_naming())
+            .nth(self.config_project_index)
+    }
+
+    /// Get the current project needing lane naming (mutable)
+    fn current_lane_project_mut(&mut self) -> Option<&mut DiscoveredProject> {
+        let idx = self.config_project_index;
+        self.discovered_projects
+            .iter_mut()
+            .filter(|p| p.selected && p.needs_lane_naming())
+            .nth(idx)
     }
 }
 
 fn run_wizard(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     state: &mut SetupState,
-    project_dir: &Path,
-    config_path: &Path,
-) -> Result<()> {
+    start_dir: &Path,
+) -> Result<PathBuf> {
     loop {
         terminal.draw(|frame| render_setup(frame, state))?;
 
         if event::poll(std::time::Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
-                if handle_setup_key(state, key, project_dir, config_path)? {
-                    break;
+                match handle_setup_key(state, key, start_dir)? {
+                    KeyResult::Continue => {}
+                    KeyResult::Done(path) => return Ok(path),
+                    KeyResult::Cancelled => anyhow::bail!("Setup cancelled"),
                 }
             }
         }
     }
-
-    Ok(())
 }
 
-fn handle_setup_key(
-    state: &mut SetupState,
-    key: KeyEvent,
-    project_dir: &Path,
-    config_path: &Path,
-) -> Result<bool> {
+enum KeyResult {
+    Continue,
+    Done(PathBuf),
+    Cancelled,
+}
+
+fn handle_setup_key(state: &mut SetupState, key: KeyEvent, start_dir: &Path) -> Result<KeyResult> {
+    // Clear error on any key
+    state.error_message = None;
+
+    // Handle lane editing mode separately
+    if state.editing_lane {
+        return handle_lane_editing(state, key);
+    }
+
     if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
-        anyhow::bail!("Setup cancelled");
+        return Ok(KeyResult::Cancelled);
     }
 
     match state.step {
         Step::Welcome => {
             if key.code == KeyCode::Enter {
-                state.step = Step::Backends;
-                state.selection = 0;
+                state.step = Step::ScanProjects;
+                // Scan for projects
+                state.discovered_projects = scan_for_projects(start_dir);
+                if state.discovered_projects.is_empty() {
+                    // No projects found, add current directory as a project
+                    let mut project = DiscoveredProject::new(
+                        state.workspace_name.clone(),
+                        start_dir.to_path_buf(),
+                    );
+                    project.selected = true;
+                    state.discovered_projects.push(project);
+                }
+                state.step = Step::SelectProjects;
             }
         }
+
+        Step::ScanProjects => {
+            // This step is automatic, transition happens in Welcome
+        }
+
+        Step::SelectProjects => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if state.select_cursor > 0 {
+                    state.select_cursor -= 1;
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if state.select_cursor < state.discovered_projects.len().saturating_sub(1) {
+                    state.select_cursor += 1;
+                }
+            }
+            KeyCode::Char(' ') => {
+                if let Some(project) = state.discovered_projects.get_mut(state.select_cursor) {
+                    project.selected = !project.selected;
+                }
+            }
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('+') => {
+                // Increase worker count (also selects the project)
+                if let Some(project) = state.discovered_projects.get_mut(state.select_cursor) {
+                    project.selected = true;
+                    if project.workers < 4 {
+                        project.workers += 1;
+                    }
+                }
+            }
+            KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('-') => {
+                // Decrease worker count (min 1)
+                if let Some(project) = state.discovered_projects.get_mut(state.select_cursor) {
+                    if project.workers > 1 {
+                        project.workers -= 1;
+                    }
+                }
+            }
+            KeyCode::Char('a') => {
+                for project in &mut state.discovered_projects {
+                    project.selected = true;
+                }
+            }
+            KeyCode::Char('n') => {
+                for project in &mut state.discovered_projects {
+                    project.selected = false;
+                }
+            }
+            KeyCode::Enter => {
+                if state.selected_projects().is_empty() {
+                    state.error_message = Some("Select at least one project".to_string());
+                } else {
+                    // Initialize lanes for all selected projects
+                    for project in &mut state.discovered_projects {
+                        if project.selected {
+                            if project.workers == 1 {
+                                // Single worker: lane name = project name
+                                project.lanes = vec![project.name.clone()];
+                            } else {
+                                // Multiple workers: need lane naming, start with numbered defaults
+                                project.lanes = (1..=project.workers)
+                                    .map(|i| format!("lane-{}", i))
+                                    .collect();
+                            }
+                        }
+                    }
+
+                    // Skip to Backends if no projects need lane naming
+                    if state.projects_needing_lanes_count() > 0 {
+                        state.step = Step::NameLanes;
+                        state.config_project_index = 0;
+                        state.lane_cursor = 0;
+                    } else {
+                        state.step = Step::Backends;
+                    }
+                }
+            }
+            _ => {}
+        },
+
+        Step::NameLanes => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if state.lane_cursor > 0 {
+                    state.lane_cursor -= 1;
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                let lane_count = state.current_lane_project().map(|p| p.lanes.len()).unwrap_or(0);
+                if state.lane_cursor < lane_count.saturating_sub(1) {
+                    state.lane_cursor += 1;
+                }
+            }
+            KeyCode::Enter => {
+                // Edit selected lane
+                let lane_cursor = state.lane_cursor;
+                if let Some(project) = state.current_lane_project() {
+                    if lane_cursor < project.lanes.len() {
+                        state.lane_input = project.lanes[lane_cursor].clone();
+                        state.editing_lane = true;
+                    }
+                }
+            }
+            KeyCode::Tab => {
+                // Next project or move to Backends
+                let total = state.projects_needing_lanes_count();
+                if state.config_project_index + 1 < total {
+                    state.config_project_index += 1;
+                    state.lane_cursor = 0;
+                } else {
+                    state.step = Step::Backends;
+                }
+            }
+            KeyCode::BackTab => {
+                // Previous project
+                if state.config_project_index > 0 {
+                    state.config_project_index -= 1;
+                    state.lane_cursor = 0;
+                }
+            }
+            _ => {}
+        },
+
         Step::Backends => match key.code {
-            KeyCode::Up => state.selection = state.selection.saturating_sub(1),
-            KeyCode::Down => state.selection = (state.selection + 1).min(1),
+            KeyCode::Up => state.backend_selection = state.backend_selection.saturating_sub(1),
+            KeyCode::Down => state.backend_selection = (state.backend_selection + 1).min(1),
             KeyCode::Left | KeyCode::Right | KeyCode::Char(' ') => {
-                if state.selection == 0 {
+                if state.backend_selection == 0 {
                     state.architect_backend = toggle_backend(state.architect_backend);
                 } else {
                     state.workers_backend = toggle_backend(state.workers_backend);
                 }
             }
-            KeyCode::Enter => state.step = Step::Workers,
-            _ => {}
-        },
-        Step::Workers => match key.code {
-            KeyCode::Left | KeyCode::Char('-') => {
-                state.worker_count = state.worker_count.saturating_sub(1).max(1);
-            }
-            KeyCode::Right | KeyCode::Char('+') => {
-                state.worker_count = (state.worker_count + 1).min(8);
-            }
-            KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
-                state.worker_count = c.to_digit(10).unwrap() as usize;
-            }
-            KeyCode::Enter => state.step = Step::Registry,
-            _ => {}
-        },
-        Step::Registry => match key.code {
-            KeyCode::Left | KeyCode::Right | KeyCode::Char(' ') => {
-                state.add_to_registry = !state.add_to_registry;
-            }
             KeyCode::Enter => state.step = Step::Confirm,
             _ => {}
         },
+
         Step::Confirm => {
             if key.code == KeyCode::Enter {
-                write_config(project_dir, config_path, state)?;
-                write_tasks(project_dir, state)?;
-                crate::commands::role::run(project_dir, None).ok();
-                if state.add_to_registry {
-                    let _ = projects::add_project(project_dir, Some(state.project_name.clone()));
+                state.step = Step::Creating;
+                // Create the workspace
+                match create_workspace(state) {
+                    Ok(_workspace_dir) => {
+                        state.step = Step::Done;
+                    }
+                    Err(e) => {
+                        state.error_message = Some(format!("Failed: {}", e));
+                        state.step = Step::Confirm;
+                    }
                 }
-                state.step = Step::Done;
             }
         }
+
+        Step::Creating => {
+            // Wait for creation to complete
+        }
+
         Step::Done => {
             if key.code == KeyCode::Enter {
-                return Ok(true);
+                let workspace_dir = crate::workspace::resolve::workspace_dir(&state.workspace_name)?;
+                return Ok(KeyResult::Done(workspace_dir));
             }
         }
     }
 
-    Ok(false)
+    Ok(KeyResult::Continue)
 }
 
-fn write_config(project_dir: &Path, config_path: &Path, state: &SetupState) -> Result<()> {
-    let workers = (1..=state.worker_count)
-        .map(|idx| {
-            let lane = if state.worker_count == 1 {
-                "default".to_string()
-            } else {
-                format!("lane-{}", idx)
-            };
-            WorkerConfig {
-                id: format!("worker-{}", idx),
-                dir: Some(".".to_string()),
-                lane: Some(lane),
-                branch: None,
+fn handle_lane_editing(state: &mut SetupState, key: KeyEvent) -> Result<KeyResult> {
+    match key.code {
+        KeyCode::Esc => {
+            state.editing_lane = false;
+            state.lane_input.clear();
+        }
+        KeyCode::Enter => {
+            let input = state.lane_input.trim().to_lowercase().replace(' ', "-");
+            if !input.is_empty() {
+                let lane_cursor = state.lane_cursor;
+                if let Some(project) = state.current_lane_project_mut() {
+                    if lane_cursor < project.lanes.len() {
+                        project.lanes[lane_cursor] = input;
+                    }
+                }
             }
-        })
-        .collect::<Vec<_>>();
+            state.editing_lane = false;
+            state.lane_input.clear();
+        }
+        KeyCode::Backspace => {
+            state.lane_input.pop();
+        }
+        KeyCode::Char(c) => {
+            // Only allow alphanumeric and dashes
+            if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' {
+                state.lane_input.push(c);
+            }
+        }
+        _ => {}
+    }
+    Ok(KeyResult::Continue)
+}
 
-    let config = HiveConfig {
+/// Scan a directory for git repositories (up to 2 levels deep)
+fn scan_for_projects(dir: &Path) -> Vec<DiscoveredProject> {
+    let mut projects = Vec::new();
+
+    // Check if current directory is a git repo
+    if dir.join(".git").exists() {
+        let name = dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("project")
+            .to_string();
+        let mut project = DiscoveredProject::new(name, dir.to_path_buf());
+        project.selected = true;
+        projects.push(project);
+        return projects;
+    }
+
+    // Scan subdirectories
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+
+            // Skip hidden directories
+            if path.file_name().and_then(|n| n.to_str()).map(|n| n.starts_with('.')).unwrap_or(false) {
+                continue;
+            }
+
+            // Check if this is a git repo
+            if path.join(".git").exists() {
+                let name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("project")
+                    .to_string();
+                projects.push(DiscoveredProject::new(name, path.clone()));
+            } else {
+                // Check one level deeper
+                if let Ok(sub_entries) = std::fs::read_dir(&path) {
+                    for sub_entry in sub_entries.filter_map(|e| e.ok()) {
+                        let sub_path = sub_entry.path();
+                        if !sub_path.is_dir() {
+                            continue;
+                        }
+
+                        if sub_path.file_name().and_then(|n| n.to_str()).map(|n| n.starts_with('.')).unwrap_or(false) {
+                            continue;
+                        }
+
+                        if sub_path.join(".git").exists() {
+                            let name = sub_path
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("project")
+                                .to_string();
+                            projects.push(DiscoveredProject::new(name, sub_path));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    projects.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    projects
+}
+
+/// Create the workspace with all configuration
+fn create_workspace(state: &SetupState) -> Result<PathBuf> {
+    let workspace_dir = create_workspace_dir(&state.workspace_name)?;
+
+    // Build workspace config
+    let mut config = WorkspaceConfig {
+        name: state.workspace_name.clone(),
+        root: Some(state.start_dir.clone()),
+        projects: Vec::new(),
         architect: ArchitectConfig {
             backend: state.architect_backend,
         },
         workers: WorkersConfig {
             backend: state.workers_backend,
+            skip_permissions: false,
         },
-        session: state.project_name.clone(),
-        tasks: TasksConfig {
-            source: TaskSource::Yaml,
-            file: Some(".hive/tasks.yaml".to_string()),
-            github_org: None,
-            github_project: None,
-            github_project_id: None,
-            github_status_field_id: None,
-            github_lane_field_id: None,
-        },
-        windows: vec![WindowConfig {
-            name: "main".to_string(),
-            layout: Some("even-horizontal".to_string()),
-            workers,
-        }],
-        setup: None,
-        messages: None,
-        worker_instructions: None,
     };
 
-    let content = serde_yaml::to_string(&config)?;
-    std::fs::write(config_path, content)
-        .with_context(|| format!("Failed writing {}", config_path.display()))?;
+    // Add selected projects with their lanes
+    for project in state.discovered_projects.iter().filter(|p| p.selected) {
+        config.projects.push(WorkspaceProject {
+            path: project.path.clone(),
+            workers: project.workers,
+            lanes: project.lanes.clone(),
+        });
+    }
 
-    std::fs::create_dir_all(project_dir.join(".hive"))?;
-    Ok(())
+    // Save config
+    config.save(&workspace_dir)?;
+
+    // Create worktrees for projects with multiple workers
+    for project in &config.projects {
+        if project.workers > 1 {
+            create_worktrees(&workspace_dir, project)?;
+        }
+    }
+
+    // Create tasks file
+    write_tasks(&workspace_dir, &config)?;
+
+    // Create architect role
+    write_architect_role(&workspace_dir, &config)?;
+
+    // Create lane role files
+    write_lane_roles(&workspace_dir, &config)?;
+
+    Ok(workspace_dir)
 }
 
-fn write_tasks(project_dir: &Path, state: &SetupState) -> Result<()> {
+fn write_tasks(workspace_dir: &Path, config: &WorkspaceConfig) -> Result<()> {
     let mut tasks = TasksFile::default();
     tasks.worker_protocol = Some(WorkerProtocol {
         claim: Some("Move the task to in_progress and add claimed_by/claimed_at".to_string()),
@@ -230,19 +539,118 @@ fn write_tasks(project_dir: &Path, state: &SetupState) -> Result<()> {
         "Create a PR before starting a new task".to_string(),
     ]);
 
-    for idx in 1..=state.worker_count {
-        let lane = if state.worker_count == 1 {
-            "default".to_string()
-        } else {
-            format!("lane-{}", idx)
-        };
+    for lane in config.all_lanes() {
         tasks.lanes.insert(lane, LaneTasks::default());
     }
 
-    let tasks_path = project_dir.join(".hive").join("tasks.yaml");
+    let tasks_path = workspace_dir.join("tasks.yaml");
     let content = serde_yaml::to_string(&tasks)?;
     std::fs::write(&tasks_path, content)
         .with_context(|| format!("Failed writing {}", tasks_path.display()))?;
+
+    Ok(())
+}
+
+fn write_architect_role(workspace_dir: &Path, config: &WorkspaceConfig) -> Result<()> {
+    let mut content = String::new();
+    content.push_str("# Architect Role\n\n");
+    content.push_str("You are the architect for this workspace. You plan tasks but do NOT write code.\n\n");
+    content.push_str("## Projects in this workspace\n\n");
+
+    for project in &config.projects {
+        let project_name = project.path.file_name().and_then(|n| n.to_str()).unwrap_or("project");
+        content.push_str(&format!(
+            "- **{}** - {}\n",
+            project_name,
+            project.path.display()
+        ));
+        content.push_str(&format!("  Lanes: {}\n", project.lanes.join(", ")));
+    }
+
+    content.push_str("\n## Task Management\n\n");
+    content.push_str(&format!(
+        "Tasks are stored in: {}/tasks.yaml\n\n",
+        workspace_dir.display()
+    ));
+    content.push_str("Add tasks to the appropriate lane's backlog. Workers will claim and complete them.\n");
+
+    let role_path = workspace_dir.join("ARCHITECT.md");
+    std::fs::write(&role_path, content)
+        .with_context(|| format!("Failed writing {}", role_path.display()))?;
+
+    Ok(())
+}
+
+fn write_lane_roles(workspace_dir: &Path, config: &WorkspaceConfig) -> Result<()> {
+    let lanes_dir = workspace_dir.join("lanes");
+    std::fs::create_dir_all(&lanes_dir)?;
+
+    for project in &config.projects {
+        let project_slug = slug_from_path(&project.path);
+        let project_name = project.path.file_name().and_then(|n| n.to_str()).unwrap_or("project");
+
+        for lane in &project.lanes {
+            let lane_dir = lanes_dir.join(lane);
+            std::fs::create_dir_all(&lane_dir)?;
+
+            // Branch naming
+            let local_prefix = format!("{}-{}/{}", project_slug, lane, lane);
+            let remote_prefix = lane.clone();
+
+            let mut content = String::new();
+            content.push_str(&format!("# Worker Role: Lane {}\n\n", lane));
+            content.push_str(&format!("You are a worker assigned to the **{}** lane.\n\n", lane));
+
+            content.push_str("## Your Project\n\n");
+            content.push_str(&format!("- {} ({})\n\n", project_name, project.path.display()));
+
+            content.push_str("## Branch Naming Convention\n\n");
+            content.push_str(&format!("- Create local branches with prefix: `{}/`\n", local_prefix));
+            content.push_str(&format!("- Example: `{}/my-feature`\n", local_prefix));
+            content.push_str(&format!(
+                "- Push command: `git push origin {}/my-feature:{}/my-feature`\n\n",
+                local_prefix, remote_prefix
+            ));
+
+            content.push_str("## Task Management\n\n");
+            content.push_str(&format!(
+                "Tasks file: {}/tasks.yaml\n",
+                workspace_dir.display()
+            ));
+            content.push_str(&format!("Your lane: `{}`\n\n", lane));
+
+            content.push_str("## Workflow\n\n");
+            content.push_str("1. Check your lane's backlog for tasks\n");
+            content.push_str("2. Claim ONE task by moving it to `in_progress`\n");
+            content.push_str("3. Create a branch following the naming convention above\n");
+            content.push_str("4. Complete the task\n");
+            content.push_str("5. Create a PR with your changes\n");
+            content.push_str("6. Move task to `done`, then claim the next task\n\n");
+
+            content.push_str("## Creating a Pull Request (REQUIRED)\n\n");
+            content.push_str("After completing a task, you MUST follow these steps:\n");
+            content.push_str(&format!("1. Create a branch: `git checkout -b {}/task-name`\n", local_prefix));
+            content.push_str("2. Stage changes: `git add -A`\n");
+            content.push_str("3. Commit: `git commit -m \"description of changes\"`\n");
+            content.push_str(&format!(
+                "4. Push: `git push origin {}/task-name:{}/task-name`\n",
+                local_prefix, remote_prefix
+            ));
+            content.push_str("5. Create PR: `gh pr create --fill`\n");
+            content.push_str("6. **Verify the PR URL is displayed before stopping**\n\n");
+
+            content.push_str("## When Backlog is Empty\n\n");
+            content.push_str("If your lane's backlog is empty, **STOP IMMEDIATELY**.\n");
+            content.push_str(&format!("- Report \"No tasks in backlog for lane {}\"\n", lane));
+            content.push_str("- Do NOT look for other work\n");
+            content.push_str("- Do NOT explore the codebase\n");
+            content.push_str("- Simply wait for the architect to add tasks\n");
+
+            let role_path = lane_dir.join("WORKER.md");
+            std::fs::write(&role_path, content)
+                .with_context(|| format!("Failed writing {}", role_path.display()))?;
+        }
+    }
 
     Ok(())
 }
@@ -270,74 +678,180 @@ fn render_setup(frame: &mut ratatui::Frame, state: &SetupState) {
     use ratatui::style::{Color, Style};
     use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
-    let area = centered_rect(70, 70, frame.area());
+    let area = centered_rect(80, 80, frame.area());
     let block = Block::default()
-        .title("Hive Setup")
+        .title("Hive Workspace Setup")
         .borders(Borders::ALL)
         .style(Style::default().bg(Color::Black));
     frame.render_widget(block.clone(), area);
 
     let inner = block.inner(area);
+
     let text = match state.step {
-        Step::Welcome => vec![
-            "Welcome to Hive".to_string(),
-            "".to_string(),
-            "This will create .hive.yaml and .hive/tasks.yaml in this repo.".to_string(),
-            "Press Enter to continue.".to_string(),
-        ],
-        Step::Backends => vec![
-            "Choose backends".to_string(),
-            "".to_string(),
-            format!(
-                "{} Architect backend: {:?}",
-                if state.selection == 0 { ">" } else { " " },
-                state.architect_backend
-            ),
-            format!(
-                "{} Workers backend: {:?}",
-                if state.selection == 1 { ">" } else { " " },
-                state.workers_backend
-            ),
-            "".to_string(),
-            "Use Up/Down to select, Left/Right to toggle.".to_string(),
-            "Press Enter to continue.".to_string(),
-        ],
-        Step::Workers => vec![
-            "Workers".to_string(),
-            "".to_string(),
-            format!("Worker count: {}", state.worker_count),
-            "Use Left/Right or 1-9 to change.".to_string(),
-            "Press Enter to continue.".to_string(),
-        ],
-        Step::Registry => vec![
-            "Project registry".to_string(),
-            "".to_string(),
-            format!(
-                "Add this repo to the global project list: {}",
-                if state.add_to_registry { "Yes" } else { "No" }
-            ),
-            "Use Left/Right to toggle.".to_string(),
-            "Press Enter to continue.".to_string(),
-        ],
-        Step::Confirm => vec![
-            "Ready to write config".to_string(),
-            "".to_string(),
-            format!("Project: {}", state.project_name),
-            format!("Architect backend: {:?}", state.architect_backend),
-            format!("Workers backend: {:?}", state.workers_backend),
-            format!("Workers: {}", state.worker_count),
-            format!(
-                "Add to registry: {}",
-                if state.add_to_registry { "Yes" } else { "No" }
-            ),
-            "".to_string(),
-            "Press Enter to create files.".to_string(),
-        ],
-        Step::Done => vec![
-            "Setup complete".to_string(),
-            "".to_string(),
-            "Press Enter to continue.".to_string(),
-        ],
+        Step::Welcome => {
+            vec![
+                "Welcome to Hive Workspace Setup".to_string(),
+                "".to_string(),
+                format!("Directory: {}", state.start_dir.display()),
+                format!("Workspace name: {}", state.workspace_name),
+                "".to_string(),
+                "This will create a workspace in ~/.hive/workspaces/".to_string(),
+                "".to_string(),
+                "Press Enter to scan for projects...".to_string(),
+            ]
+        }
+
+        Step::ScanProjects => {
+            vec!["Scanning for projects...".to_string()]
+        }
+
+        Step::SelectProjects => {
+            let mut lines = vec![
+                "Select projects and worker count".to_string(),
+                "".to_string(),
+                format!("Found {} project(s):", state.discovered_projects.len()),
+                "".to_string(),
+            ];
+
+            for (i, project) in state.discovered_projects.iter().enumerate() {
+                let cursor = if i == state.select_cursor { ">" } else { " " };
+                let selected = if project.selected { "[x]" } else { "[ ]" };
+                let workers_display = if project.workers > 1 {
+                    format!(" ({} workers)", project.workers)
+                } else {
+                    String::new()
+                };
+                lines.push(format!(
+                    "{} {} {}{}",
+                    cursor,
+                    selected,
+                    project.name,
+                    workers_display
+                ));
+            }
+
+            lines.push("".to_string());
+            lines.push("Space: toggle | +/-: workers | a: all | Enter: continue".to_string());
+
+            if let Some(ref err) = state.error_message {
+                lines.push("".to_string());
+                lines.push(format!("Error: {}", err));
+            }
+
+            lines
+        }
+
+        Step::NameLanes => {
+            let total = state.projects_needing_lanes_count();
+            let current_idx = state.config_project_index + 1;
+
+            if let Some(project) = state.current_lane_project() {
+                let mut lines = vec![
+                    format!("Name lanes for: {}                         [{} of {}]", project.name, current_idx, total),
+                    "".to_string(),
+                    format!("This project has {} workers. Name each lane:", project.workers),
+                    "".to_string(),
+                ];
+
+                for (i, lane) in project.lanes.iter().enumerate() {
+                    let marker = if i == state.lane_cursor { ">" } else { " " };
+                    lines.push(format!("  {} Lane {}: {}", marker, i + 1, lane));
+                }
+
+                lines.push("".to_string());
+
+                if state.editing_lane {
+                    lines.push(format!("Lane name: {}_", state.lane_input));
+                    lines.push("".to_string());
+                    lines.push("Enter: save | Esc: cancel".to_string());
+                } else {
+                    lines.push("Enter: rename | Tab: next project | Shift+Tab: prev".to_string());
+                }
+
+                lines
+            } else {
+                vec!["No project to configure".to_string()]
+            }
+        }
+
+        Step::Backends => {
+            vec![
+                "Choose AI backends".to_string(),
+                "".to_string(),
+                format!(
+                    "{} Architect backend: {:?}",
+                    if state.backend_selection == 0 { ">" } else { " " },
+                    state.architect_backend
+                ),
+                format!(
+                    "{} Workers backend: {:?}",
+                    if state.backend_selection == 1 { ">" } else { " " },
+                    state.workers_backend
+                ),
+                "".to_string(),
+                "Up/Down: select | Left/Right: toggle | Enter: continue".to_string(),
+            ]
+        }
+
+        Step::Confirm => {
+            let mut lines = vec![
+                "Ready to create workspace".to_string(),
+                "".to_string(),
+                format!("Workspace: {}", state.workspace_name),
+                format!("Location: ~/.hive/workspaces/{}/", state.workspace_name),
+                "".to_string(),
+                "Projects:".to_string(),
+            ];
+
+            for project in state.discovered_projects.iter().filter(|p| p.selected) {
+                if project.workers == 1 {
+                    lines.push(format!("  {} (1 worker)", project.name));
+                } else {
+                    lines.push(format!("  {} ({} workers: {})",
+                        project.name,
+                        project.workers,
+                        project.lanes.join(", ")
+                    ));
+                }
+            }
+
+            lines.push("".to_string());
+            lines.push(format!("Architect: {:?}", state.architect_backend));
+            lines.push(format!("Workers backend: {:?}", state.workers_backend));
+            lines.push(format!("Total workers: {}", state.total_workers()));
+            lines.push("".to_string());
+            lines.push("Press Enter to create workspace...".to_string());
+
+            if let Some(ref err) = state.error_message {
+                lines.push("".to_string());
+                lines.push(format!("Error: {}", err));
+            }
+
+            lines
+        }
+
+        Step::Creating => {
+            vec![
+                "Creating workspace...".to_string(),
+                "".to_string(),
+                "Creating directories...".to_string(),
+                "Creating worktrees...".to_string(),
+                "Writing configuration...".to_string(),
+            ]
+        }
+
+        Step::Done => {
+            vec![
+                "Workspace created successfully!".to_string(),
+                "".to_string(),
+                format!("Location: ~/.hive/workspaces/{}/", state.workspace_name),
+                "".to_string(),
+                "You can now run 'hive' from any project directory".to_string(),
+                format!("or 'hive open {}' from anywhere.", state.workspace_name),
+                "".to_string(),
+                "Press Enter to start hive...".to_string(),
+            ]
+        }
     }
     .join("\n");
 

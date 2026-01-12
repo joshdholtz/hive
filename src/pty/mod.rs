@@ -24,16 +24,23 @@ pub fn spawn_agent(
     backend: Backend,
     message: &str,
     working_dir: &Path,
+    skip_permissions: bool,
 ) -> Result<(
     Box<dyn portable_pty::MasterPty + Send>,
     Box<dyn portable_pty::Child + Send>,
     Box<dyn std::io::Write + Send>,
 )> {
     let pty_system = native_pty_system();
+    // Codex caches terminal dimensions, so start with a larger size
+    // to avoid TUI rendering issues when panes are small
+    let (rows, cols) = match backend {
+        Backend::Codex => (40, 120),
+        Backend::Claude => (24, 80),
+    };
     let pair = pty_system
         .openpty(PtySize {
-            rows: 24,
-            cols: 80,
+            rows,
+            cols,
             pixel_width: 0,
             pixel_height: 0,
         })
@@ -42,8 +49,15 @@ pub fn spawn_agent(
     let cmd = match backend {
         Backend::Claude => {
             let mut cmd = CommandBuilder::new("claude");
+            if skip_permissions {
+                cmd.arg("--dangerously-skip-permissions");
+            }
             cmd.arg(message);
             cmd.cwd(working_dir);
+            // Set terminal type and locale for proper unicode rendering
+            cmd.env("TERM", "xterm-256color");
+            cmd.env("LANG", "en_US.UTF-8");
+            cmd.env("LC_ALL", "en_US.UTF-8");
             cmd
         }
         Backend::Codex => {
@@ -61,6 +75,10 @@ pub fn spawn_agent(
                 message,
             ]);
             cmd.cwd(working_dir);
+            // Set terminal type and locale for proper rendering
+            cmd.env("TERM", "xterm-256color");
+            cmd.env("LANG", "en_US.UTF-8");
+            cmd.env("LC_ALL", "en_US.UTF-8");
             cmd
         }
     };
@@ -109,6 +127,29 @@ pub fn spawn_reader_thread(
         }
         let _ = tx.send(PaneEvent::Exited { pane_id });
     });
+}
+
+/// Check if data contains a cursor position query (ESC[6n or ESC[?6n)
+pub fn contains_cursor_query(data: &[u8]) -> bool {
+    // Look for ESC[6n pattern (cursor position query / DSR)
+    // ESC = 0x1b, [ = 0x5b, 6 = 0x36, n = 0x6e
+    for window in data.windows(4) {
+        if window[0] == 0x1b && window[1] == b'[' && window[2] == b'6' && window[3] == b'n' {
+            return true;
+        }
+    }
+    // Also check for ESC[?6n variant
+    for window in data.windows(5) {
+        if window[0] == 0x1b
+            && window[1] == b'['
+            && window[2] == b'?'
+            && window[3] == b'6'
+            && window[4] == b'n'
+        {
+            return true;
+        }
+    }
+    false
 }
 
 pub fn send_to_pane(writer: &mut dyn std::io::Write, message: &str) -> Result<()> {

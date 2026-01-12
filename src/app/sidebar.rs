@@ -1,5 +1,5 @@
-use std::collections::BTreeMap;
 use std::collections::HashMap;
+use indexmap::IndexMap;
 
 use crate::app::state::ClientPane;
 use crate::app::types::PaneType;
@@ -63,7 +63,8 @@ impl SidebarState {
             });
         }
 
-        let mut grouped: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        // Use IndexMap to preserve insertion order (config order)
+        let mut grouped: IndexMap<String, Vec<String>> = IndexMap::new();
         let mut standalone: Vec<String> = Vec::new();
 
         for pane in panes {
@@ -77,12 +78,15 @@ impl SidebarState {
             }
         }
 
-        for children in grouped.values_mut() {
-            children.sort();
-        }
-        standalone.sort();
+        // Don't sort - preserve config order
 
         for (group, children) in grouped {
+            // Single-worker groups become standalone (no nested group)
+            if children.len() == 1 {
+                standalone.push(children.into_iter().next().unwrap());
+                continue;
+            }
+
             let expanded = self.expanded.get(&group).copied().unwrap_or(true);
             rows.push(SidebarRow {
                 kind: SidebarRowKind::Group {
@@ -213,6 +217,64 @@ impl SidebarState {
             SidebarSelection::Pane(pane_id) => Some(pane_id.clone()),
             _ => None,
         }
+    }
+
+    /// Move selected pane up in the order (swap with previous non-architect pane)
+    pub fn reorder_up(&self, panes: &mut Vec<ClientPane>) -> bool {
+        let pane_id = match &self.selection {
+            SidebarSelection::Pane(id) => id,
+            _ => return false,
+        };
+
+        // Find current index
+        let Some(idx) = panes.iter().position(|p| &p.id == pane_id) else {
+            return false;
+        };
+
+        // Don't move architect
+        if matches!(panes[idx].pane_type, PaneType::Architect) {
+            return false;
+        }
+
+        // Find previous non-architect pane
+        let mut prev_idx = None;
+        for i in (0..idx).rev() {
+            if !matches!(panes[i].pane_type, PaneType::Architect) {
+                prev_idx = Some(i);
+                break;
+            }
+        }
+
+        if let Some(prev) = prev_idx {
+            panes.swap(idx, prev);
+            return true;
+        }
+        false
+    }
+
+    /// Move selected pane down in the order (swap with next pane)
+    pub fn reorder_down(&self, panes: &mut Vec<ClientPane>) -> bool {
+        let pane_id = match &self.selection {
+            SidebarSelection::Pane(id) => id,
+            _ => return false,
+        };
+
+        // Find current index
+        let Some(idx) = panes.iter().position(|p| &p.id == pane_id) else {
+            return false;
+        };
+
+        // Don't move architect
+        if matches!(panes[idx].pane_type, PaneType::Architect) {
+            return false;
+        }
+
+        // Find next pane (any, since architect is always first)
+        if idx + 1 < panes.len() {
+            panes.swap(idx, idx + 1);
+            return true;
+        }
+        false
     }
 
     fn set_visibility(&mut self, panes: &mut [ClientPane], visible: bool) -> Vec<(String, bool)> {

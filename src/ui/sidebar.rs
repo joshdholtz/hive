@@ -29,17 +29,19 @@ pub fn render_sidebar(frame: &mut Frame, area: Rect, app: &App) {
                         false,
                     )
                 }
-                SidebarRowKind::Pane { pane_id, .. } => {
-                    let visible = app
-                        .panes
-                        .iter()
-                        .find(|pane| &pane.id == pane_id)
-                        .map(|pane| pane.visible)
-                        .unwrap_or(false);
+                SidebarRowKind::Pane { pane_id, group: _ } => {
+                    let pane = app.panes.iter().find(|pane| &pane.id == pane_id);
+                    let visible = pane.map(|p| p.visible).unwrap_or(false);
+                    let lane = pane.and_then(|p| p.lane.as_ref());
                     let icon = if visible { "*" } else { "o" };
+
+                    // Show lane name for workers (which is repo name for single-worker repos)
+                    // Fall back to pane_id for architect or if no lane
+                    let label = lane.cloned().unwrap_or_else(|| pane_id.clone());
+
                     (
                         format!("{} ", icon),
-                        pane_id.clone(),
+                        label,
                         focused_id == Some(pane_id.as_str()),
                     )
                 }

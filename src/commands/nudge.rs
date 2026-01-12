@@ -40,7 +40,15 @@ pub fn run(start_dir: &Path, specific_worker: Option<&str>) -> Result<()> {
                 let lane = worker.lane.clone().unwrap_or_else(|| worker.id.clone());
                 let counts = counts_for_lane(&tasks, &lane);
 
-                if counts.backlog > 0 && counts.in_progress == 0 {
+                // For automatic nudges (all workers): only nudge if backlog AND not busy
+                // For manual nudges (specific worker): nudge if backlog, even if busy
+                let should_nudge = if specific_worker.is_some() {
+                    counts.backlog > 0
+                } else {
+                    counts.backlog > 0 && counts.in_progress == 0
+                };
+
+                if should_nudge {
                     let message = build_nudge_message(&config, &lane, counts.backlog, &worker.branch);
                     println!("[{}] {}", worker.id, message);
                 }
