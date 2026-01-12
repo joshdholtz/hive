@@ -6,86 +6,53 @@
   <strong>Run a swarm of AI agents in parallel on your codebase</strong>
 </p>
 
-Hive orchestrates multiple Claude or Codex instances working in parallel on your codebase. Instead of one AI doing tasks sequentially, run 3, 5, or 10 workers simultaneously—each focused on their own lane of work, coordinated by an architect agent.
+Hive is a native terminal multiplexer for orchestrating multiple Claude or Codex instances working in parallel. Instead of one AI doing tasks sequentially, run 3, 5, or 10+ workers simultaneously—each focused on their own lane of work, coordinated by an architect agent.
 
 ```
-┌─────────────┐     ┌───────────────────┐     ┌─────────────┐
-│  ARCHITECT  │────▶│  .hive/tasks.yaml │◀────│   WATCHER   │
-│   (plans)   │     │                   │     │  (nudges)   │
-└─────────────┘     └───────────────────┘     └─────────────┘
-                           │
-              ┌────────────┼────────────┐
-              ▼            ▼            ▼
-        ┌──────────┐ ┌──────────┐ ┌──────────┐
-        │ worker-1 │ │ worker-2 │ │ worker-3 │
-        │   (api)  │ │  (auth)  │ │ (tests)  │
-        └──────────┘ └──────────┘ └──────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                        architect                             │
+├────────────────────┬────────────────────┬───────────────────┤
+│      features      │       fixes        │       tests       │
+├────────────────────┼────────────────────┼───────────────────┤
+│        api         │       auth         │      android      │
+└────────────────────┴────────────────────┴───────────────────┘
+         3/6 visible | [1/2] | backend: claude | mode: NAV
 ```
 
 ---
 
-## The Problem
+## Features
 
-You have an AI coding assistant. It's great! But:
-
-- 🐌 **Sequential execution** — One task at a time
-- 📋 **Growing backlog** — 20 features, bugs, and improvements waiting
-- ⏰ **Time wasted** — Watching one agent work while you could run five
-- 🔀 **Context switching** — Hard for one agent to juggle multiple concerns
-
-What if you could just... run more agents in parallel?
-
----
-
-## The Hive Approach
-
-Hive is opinionated about how AI agents should collaborate:
-
-### 🧠 One Architect
-- Plans and coordinates all work
-- Researches the codebase before proposing tasks
-- Writes clear, scoped tasks with acceptance criteria
-- **Does NOT write code** — planning only
-- Claude recommended for stronger reasoning
-
-### 🐝 Many Workers
-- Each worker has a "lane" (api, auth, frontend, etc.)
-- Claims ONE task at a time from their lane's backlog
-- Implements the task and pushes a PR
-- Never starts new work until previous PR is pushed
-
-### 👁 One Watcher
-- Monitors the task queue for changes
-- Nudges idle workers when new tasks appear
-- Keeps the hive productive
-
-### Why separate architect from workers?
-
-When an AI both plans AND executes, it often rushes into coding without proper research. The architect/worker split enforces a planning phase. The architect must understand the codebase and get your approval before adding tasks. Workers just execute.
+- **Native TUI** — No tmux required. Built-in terminal multiplexer with split panes
+- **Worker Pagination** — Handle 10+ workers with `[`/`]` page navigation
+- **Smart Mode** — Show only workers with active tasks (`Ctrl+S`)
+- **Command Palette** — Quick actions with `Ctrl+P`
+- **Sidebar** — Toggle worker visibility, reorder panes
+- **Scrollback** — Scroll through output with `Ctrl+U`/`Ctrl+D`
+- **Multi-Project Workspaces** — Manage multiple repos with a single hive
+- **Project Registry** — Quick-switch between projects
 
 ---
 
 ## Quick Start
 
 ```bash
-# Install hive
-curl -fsSL https://raw.githubusercontent.com/joshdholtz/hive/main/install.sh | bash
+# Install (requires Rust)
+cargo install --git https://github.com/joshdholtz/hive
 
-# Set up your project
+# Set up a single project
 cd your-project
 hive init
+
+# Or set up a multi-project workspace
+hive setup              # Interactive wizard
 
 # Start the swarm
 hive up
 
-# Attach to watch
-tmux attach -t your-project
+# Attach to the TUI (if detached)
+hive attach
 ```
-
-The `hive init` wizard will guide you through:
-1. Choosing backends for architect and workers (Claude or Codex)
-2. Configuring your task source (YAML file or GitHub Projects)
-3. Setting up workers with optional git worktrees for parallel development
 
 ---
 
@@ -93,42 +60,77 @@ The `hive init` wizard will guide you through:
 
 | Command | Description |
 |---------|-------------|
-| `hive init` | Interactive setup wizard |
-| `hive deinit` | Remove hive config and generated files |
-| `hive up` | Start the architect, workers, and watcher |
-| `hive stop` | Stop the tmux session |
+| `hive init` | Initialize a single project with `.hive.yaml` |
+| `hive setup` | Interactive workspace wizard for multi-project setups |
+| `hive up` | Start the hive (architect + workers) |
+| `hive attach` | Attach to a running hive's TUI |
+| `hive stop` | Stop the hive server |
 | `hive status` | Show worker status and task counts |
-| `hive nudge [worker]` | Nudge idle workers to check for tasks |
-| `hive role [worker]` | Regenerate .hive/ARCHITECT.md and .hive/workers/*/WORKER.md files |
-| `hive doctor` | Check and fix common issues (missing files, etc.) |
+| `hive nudge [worker]` | Nudge workers to check for tasks |
+| `hive list` | List registered projects |
+| `hive open [project]` | Open a project from the registry |
+| `hive doctor` | Check and fix common issues |
+| `hive deinit` | Remove hive configuration |
 
 ---
 
-## How It Works
+## TUI Keybindings
 
-1. **`hive up`** starts a tmux session with:
-   - **Architect window** — AI that plans work and writes tasks
-   - **Worker windows** — One or more panes, each running an AI agent
-   - **Watch window** — Monitors tasks and nudges idle workers
+### Modes
 
-2. **The architect** reads `.hive/ARCHITECT.md` and waits for your instructions. Tell it what you want to build, and it will research the codebase, propose tasks, and (with your approval) add them to the task file.
+The TUI has two modes indicated by border color:
+- **Yellow border** = Input mode (keystrokes go to the focused agent)
+- **Cyan border** = Nav mode (keystrokes control the TUI)
 
-3. **The watcher** monitors the task file. When it sees tasks in a lane's backlog and that lane's worker is idle, it sends a nudge.
+Press `Escape` to enter nav mode, `Enter` to return to input mode.
 
-4. **Workers** receive nudges, claim a task, implement it, and push a PR. Then they wait for the next nudge.
+### Nav Mode Keys
+
+| Key | Action |
+|-----|--------|
+| `h`/`j`/`k`/`l` or arrows | Navigate between panes |
+| `[` / `]` | Previous/next page of workers |
+| `Ctrl+U` / `Ctrl+D` | Scroll up/down half page |
+| `PageUp` / `PageDown` | Scroll up/down |
+| `Home` / `End` | Scroll to top/bottom |
+| `z` | Toggle zoom on focused pane |
+| `n` | Nudge all workers |
+| `N` | Nudge focused worker |
+| `d` | Detach from TUI (hive keeps running) |
+| `?` | Toggle help |
+| `Tab` | Focus sidebar |
+
+### Global Keys (any mode)
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+P` | Command palette |
+| `Ctrl+S` | Toggle smart mode (show only active workers) |
+| `Ctrl+B` | Toggle sidebar |
+| `Escape` | Enter nav mode / close dialogs |
+
+### Sidebar Keys (when focused)
+
+| Key | Action |
+|-----|--------|
+| `j`/`k` or arrows | Navigate items |
+| `Space` | Toggle visibility |
+| `Ctrl+U` / `Ctrl+D` | Reorder pane up/down |
+| `Tab` or `Escape` | Return to panes |
 
 ---
 
 ## Configuration
 
-Hive uses `.hive.yaml` in your project root:
+### Single Project (`.hive.yaml`)
 
 ```yaml
 architect:
-  backend: claude          # Claude recommended for planning
+  backend: claude
 
 workers:
-  backend: claude          # Can use codex if preferred
+  backend: claude
+  skip_permissions: true   # Auto-approve all actions (Claude only)
 
 session: my-project
 
@@ -138,68 +140,50 @@ tasks:
 
 windows:
   - name: backend
-    layout: even-horizontal
     workers:
-      - id: backend-api
-        dir: ./backend-api
+      - id: api
         lane: api
-      - id: backend-auth
-        dir: ./backend-auth
+      - id: auth
         lane: auth
 ```
 
-### Setup Commands
-
-Run commands before starting the session (e.g., install dependencies):
+### Workers Config
 
 ```yaml
-setup:
-  - mise install
-  - npm install
+workers:
+  backend: claude          # claude or codex
+  skip_permissions: true   # Skip approval prompts (adds --dangerously-skip-permissions)
 ```
 
-Commands run in order from the project root. If any command fails, `hive up` stops.
+**Note:** `skip_permissions` only affects Claude. Codex always runs with `--sandbox danger-full-access --ask-for-approval never`.
 
-### Messages
+### Multi-Project Workspace (`.hive/workspace.yaml`)
 
-Customize the messages sent to workers. These are generated with sensible defaults by `hive init`, but you can edit them for your workflow:
+For managing multiple repositories:
 
 ```yaml
-messages:
-  startup: |
-    Read .hive/workers/{lane}/WORKER.md if it exists. You are assigned to lane '{lane}'.
-    Check your task backlog. If empty, STOP. If tasks exist, claim ONE and work on it.
-    When finished, create a PR.
-  nudge: |
-    You have {backlog_count} task(s) in lane '{lane}'.
-    Claim ONE task and work on it.
+name: my-workspace
+root: /path/to/workspace
+
+projects:
+  - path: ./frontend
+    workers: 2
+    lanes: [ui, components]
+  - path: ./backend
+    workers: 3
+    lanes: [api, auth, database]
+
+architect:
+  backend: claude
+
+workers:
+  backend: claude
 ```
 
-**Available variables:**
-- `{lane}` - The worker's assigned lane
-- `{backlog_count}` - Number of tasks in the backlog (nudge only)
+Run `hive setup` to create this interactively.
 
-### Worker Instructions
+### Task File Structure
 
-Add project-specific instructions that get written to `.hive/workers/*/WORKER.md` files:
-
-```yaml
-worker_instructions: |
-  Always run mix test before pushing.
-  Use conventional commit format.
-```
-
-### Task Sources
-
-**YAML (default)** — Simple file-based task queue:
-
-```yaml
-tasks:
-  source: yaml
-  file: .hive/tasks.yaml
-```
-
-Task file structure:
 ```yaml
 api:
   backlog:
@@ -217,164 +201,126 @@ auth:
   done: []
 ```
 
-**GitHub Projects** — Use a GitHub Project board:
+### Custom Messages
 
 ```yaml
-tasks:
-  source: github
-  github_org: your-org
-  github_project: 4
-  github_project_id: PVT_kwXXXXXX
-  github_status_field_id: PVTSSF_statusXXX
-  github_lane_field_id: PVTSSF_laneXXX
+messages:
+  startup: |
+    Read .hive/workers/{lane}/WORKER.md. You are assigned to lane '{lane}'.
+    Check your task backlog. If empty, STOP. If tasks exist, claim ONE.
+  nudge: |
+    You have {backlog_count} task(s) in lane '{lane}'. Claim ONE task.
 ```
 
 ### Branch Naming
 
-Configure branch conventions per worker for clean git history:
-
 ```yaml
-workers:
-  - id: backend-api
-    dir: ./backend-api
-    lane: api
-    branch:
-      local: "backend-api/api"
-      remote: "api"
+windows:
+  - name: backend
+    workers:
+      - id: api-worker
+        lane: api
+        branch:
+          local: "api-worker/api"    # Local branch prefix
+          remote: "api"              # Remote branch prefix
 ```
 
-Workers will create branches like `backend-api/api/add-users` and push to `api/add-users`.
+---
+
+## Architecture
+
+```
+┌─────────────┐     ┌───────────────────┐     ┌─────────────┐
+│  ARCHITECT  │────▶│  .hive/tasks.yaml │◀────│   WATCHER   │
+│   (plans)   │     │                   │     │  (nudges)   │
+└─────────────┘     └───────────────────┘     └─────────────┘
+                           │
+              ┌────────────┼────────────┐
+              ▼            ▼            ▼
+        ┌──────────┐ ┌──────────┐ ┌──────────┐
+        │  worker  │ │  worker  │ │  worker  │
+        │   (api)  │ │  (auth)  │ │ (tests)  │
+        └──────────┘ └──────────┘ └──────────┘
+```
+
+### Separation of Concerns
+
+- **Architect** — Plans work, researches codebase, writes tasks. Does NOT write code.
+- **Workers** — Execute tasks, one at a time. Push PRs when done.
+- **Watcher** — Monitors task file, nudges idle workers when backlog appears.
+
+This separation prevents the AI from rushing into coding without proper planning.
+
+---
+
+## Project Registry
+
+Hive maintains a registry of your projects at `~/.hive/projects.json`. Use it to quickly switch between projects:
+
+```bash
+# List all registered projects
+hive list
+
+# Open a project by name
+hive open my-project
+
+# Projects are auto-registered when you run hive up
+```
+
+Access the project manager in the TUI with `Ctrl+P` → "Project manager" or press `Ctrl+O`.
 
 ---
 
 ## Git Worktrees
 
-When you have multiple workers, each needs their own checkout of the repo to avoid conflicts. Hive's init wizard can create git worktrees for you:
+For multi-worker setups, each worker needs its own checkout. Hive can create git worktrees:
 
 ```
 my-project/
-├── backend/              # Main repo
-├── backend-api/          # Worktree for API worker
-├── backend-auth/         # Worktree for Auth worker
-└── backend-tests/        # Worktree for Tests worker
+├── main/                 # Main repo
+├── .hive-worktrees/
+│   ├── api/              # Worktree for API worker
+│   ├── auth/             # Worktree for Auth worker
+│   └── tests/            # Worktree for Tests worker
 ```
 
-Each worktree is a full checkout on its own branch, so workers can commit and push independently.
-
----
-
-## Best Practices
-
-**Use Claude for the architect.** Planning requires stronger reasoning than execution. Claude excels at understanding codebases and scoping work.
-
-**Keep tasks small and focused.** "Add user authentication" is too big. "Add POST /login endpoint with JWT" is better.
-
-**One task per worker at a time.** Workers should finish and push before claiming new work. This keeps PRs reviewable.
-
-**Let the architect propose, you approve.** Don't let the architect add tasks without your confirmation. Review the task list before it goes to workers.
-
-**Use lanes to organize work.** Group related tasks (api, frontend, tests) so specialized workers can focus.
+The `hive setup` wizard handles this automatically.
 
 ---
 
 ## Dependencies
 
 **Required:**
-- `bash` 3.2+ (macOS default works)
-- [`yq`](https://github.com/mikefarah/yq) — YAML processing (`brew install yq`)
-- [`tmux`](https://github.com/tmux/tmux) — Terminal multiplexer (`brew install tmux`)
-- [`tmuxp`](https://github.com/tmux-python/tmuxp) — tmux session manager (`pip install tmuxp`)
-- `claude` or `codex` — AI CLI
-
-**For GitHub Projects:**
-- [`gh`](https://cli.github.com/) — GitHub CLI (`brew install gh`)
-- [`jq`](https://jqlang.github.io/jq/) — JSON processing (`brew install jq`)
+- Rust (for installation)
+- `claude` CLI and/or `codex` CLI
 
 **Optional:**
-- [`fswatch`](https://github.com/emcrisostomo/fswatch) — Efficient file watching (`brew install fswatch`)
-- [`gum`](https://github.com/charmbracelet/gum) — Pretty prompts in init wizard (`brew install gum`)
+- `gh` — GitHub CLI (for GitHub Projects integration)
+- `git` — For worktree support
 
 ---
 
-## Examples
+## Best Practices
 
-### Simple: Single Worker
-
-```yaml
-architect:
-  backend: claude
-
-workers:
-  backend: claude
-
-session: my-app
-
-tasks:
-  source: yaml
-  file: .hive/tasks.yaml
-
-windows:
-  - name: dev
-    workers:
-      - id: main
-        dir: .
-        lane: default
-```
-
-### Multi-Worker with Worktrees
-
-```yaml
-architect:
-  backend: claude
-
-workers:
-  backend: codex
-
-session: backend-hive
-
-tasks:
-  source: yaml
-  file: .hive/tasks.yaml
-
-windows:
-  - name: backend
-    layout: even-horizontal
-    workers:
-      - id: backend-api
-        dir: ./backend-api
-        lane: api
-        branch:
-          local: "backend-api/api"
-          remote: "api"
-
-      - id: backend-auth
-        dir: ./backend-auth
-        lane: auth
-        branch:
-          local: "backend-auth/auth"
-          remote: "auth"
-
-      - id: backend-tests
-        dir: ./backend-tests
-        lane: tests
-        branch:
-          local: "backend-tests/tests"
-          remote: "tests"
-```
+1. **Use Claude for the architect** — Planning requires stronger reasoning
+2. **Keep tasks small** — "Add POST /login endpoint" not "Add authentication"
+3. **One task at a time** — Workers finish and push before claiming new work
+4. **Let architect propose, you approve** — Review tasks before workers start
+5. **Use lanes** — Group related work (api, frontend, tests)
+6. **Use smart mode** — `Ctrl+S` to focus on active workers in large hives
 
 ---
 
-## Uninstall
+## Troubleshooting
 
-```bash
-rm ~/.local/bin/hive
-```
+### Codex TUI Issues
+Codex has known issues with small terminal panes. Hive uses larger PTY sizes for Codex (40x120 initial, 16x60 minimum) to mitigate this.
 
-Or if you used `hive init` in a project:
+### Claude Permission Prompts
+Add `skip_permissions: true` to your workers config to auto-approve actions.
 
-```bash
-hive deinit   # Removes config, role files, and optionally worktrees
-```
+### Workers Not Getting Nudged
+Manual nudges (`N` in nav mode) now work even if a worker has tasks in progress.
 
 ---
 
