@@ -83,6 +83,8 @@ impl Default for WorkspaceConfig {
             workers: WorkersConfig {
                 backend: Backend::Claude,
                 skip_permissions: false,
+                setup: Vec::new(),
+                symlink: Vec::new(),
             },
         }
     }
@@ -135,10 +137,19 @@ pub fn expand_workers(config: &WorkspaceConfig, workspace_dir: &Path) -> Vec<Run
                 remote: lane.clone(),
             });
 
+            // Lane format:
+            // - Multi-lane projects: "project/lane" (e.g., "backend/fixes")
+            // - Single-lane projects: lane as-is (e.g., "android-sdk")
+            let full_lane = if project.lanes.len() > 1 {
+                format!("{}/{}", project_slug, lane)
+            } else {
+                lane.clone()
+            };
+
             workers.push(RuntimeWorker {
                 id: format!("worker-{}", worker_idx + 1),
                 working_dir,
-                lane: lane.clone(),
+                lane: full_lane,
                 project_path: project.path.clone(),
                 is_worktree,
                 branch,

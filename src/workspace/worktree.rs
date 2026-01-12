@@ -21,6 +21,15 @@ pub fn create_worktrees(
     workspace_dir: &Path,
     project: &WorkspaceProject,
 ) -> Result<Vec<WorktreeInfo>> {
+    create_worktrees_with_symlinks(workspace_dir, project, &[])
+}
+
+/// Create worktrees with optional symlinks from original repo
+pub fn create_worktrees_with_symlinks(
+    workspace_dir: &Path,
+    project: &WorkspaceProject,
+    symlink_files: &[String],
+) -> Result<Vec<WorktreeInfo>> {
     if project.lanes.len() <= 1 {
         return Ok(Vec::new());
     }
@@ -39,6 +48,8 @@ pub fn create_worktrees(
 
         // Skip if worktree already exists
         if worktree_path.exists() {
+            // Still create symlinks if they don't exist
+            create_symlinks(&project.path, &worktree_path, symlink_files);
             results.push(WorktreeInfo {
                 worker_index: i + 1,
                 path: worktree_path,
@@ -50,6 +61,9 @@ pub fn create_worktrees(
         // Create the worktree with a new branch
         git_create_worktree(&project.path, &worktree_path, &branch_name)?;
 
+        // Create symlinks for specified files
+        create_symlinks(&project.path, &worktree_path, symlink_files);
+
         results.push(WorktreeInfo {
             worker_index: i + 1,
             path: worktree_path,
@@ -58,6 +72,32 @@ pub fn create_worktrees(
     }
 
     Ok(results)
+}
+
+/// Create symlinks from worktree to original repo for specified files
+fn create_symlinks(original_repo: &Path, worktree: &Path, files: &[String]) {
+    for file in files {
+        let source = original_repo.join(file);
+        let dest = worktree.join(file);
+
+        // Only symlink if source exists and dest doesn't
+        if source.exists() && !dest.exists() {
+            // Remove dest if it's a broken symlink
+            if dest.symlink_metadata().is_ok() {
+                let _ = std::fs::remove_file(&dest);
+            }
+
+            #[cfg(unix)]
+            {
+                let _ = std::os::unix::fs::symlink(&source, &dest);
+            }
+
+            #[cfg(windows)]
+            {
+                let _ = std::os::windows::fs::symlink_file(&source, &dest);
+            }
+        }
+    }
 }
 
 /// Remove all worktrees in a workspace

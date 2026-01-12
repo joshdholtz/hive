@@ -22,15 +22,17 @@ pub fn render_pane(
     let border_style = Style::default().fg(border_color);
 
     // Build title: "group/lane" or just "lane" (or "architect")
-    // Don't show group prefix if group name matches lane name
+    // Don't show group prefix if lane already contains it (e.g., "backend/features")
     let mut title = match &pane.pane_type {
         PaneType::Architect => "architect".to_string(),
         PaneType::Worker { lane } => {
             if let Some(group) = &pane.group {
-                if group != lane {
-                    format!("{}/{}", group, lane)
-                } else {
+                // Skip group prefix if lane already starts with "group/"
+                let group_prefix = format!("{}/", group);
+                if lane.starts_with(&group_prefix) || group == lane {
                     lane.clone()
+                } else {
+                    format!("{}/{}", group, lane)
                 }
             } else {
                 lane.clone()

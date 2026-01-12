@@ -84,6 +84,11 @@ pub fn run(start_dir: &Path, specific_worker: Option<&str>) -> Result<()> {
                     content.push_str("- Check the `backlog` section for pending tasks\n");
                     content.push_str("- Move tasks to `in_progress` when you start\n");
                     content.push_str("- Move tasks to `done` when complete\n\n");
+                    content.push_str("## YAML Validation (CRITICAL)\n");
+                    content.push_str("When editing tasks.yaml, you MUST ensure valid YAML:\n");
+                    content.push_str("- Empty lists MUST use `[]`, never leave blank (e.g., `backlog: []` not `backlog:`)\n");
+                    content.push_str("- After editing, validate with: `yq eval '.' tasks.yaml > /dev/null && echo 'Valid' || echo 'Invalid'`\n");
+                    content.push_str("- If validation fails, fix the YAML before proceeding\n\n");
                 }
             }
 
@@ -176,11 +181,16 @@ fn generate_architect_role(
             content.push_str("## Task Management\n\n");
             content.push_str(&format!("Tasks are managed in `{}`.\n\n", tasks_file.display()));
             content.push_str("### Adding a Task\n\n");
-            content.push_str("```yaml\n<lane-name>:\n  backlog:\n    - id: my-task-id\n      description: What needs to be done\n      acceptance:\n        - First acceptance criterion\n        - Second acceptance criterion\n```\n\n");
+            content.push_str("```yaml\n<lane-name>:\n  backlog:\n    - id: my-task-id\n      title: Short title for the task\n      description: |\n        Detailed description of what needs to be done.\n      priority: high\n      acceptance:\n        - First acceptance criterion\n        - Second acceptance criterion\n```\n\n");
             content.push_str("### Task Lifecycle\n\n");
             content.push_str("1. **backlog** - Tasks waiting to be claimed\n");
             content.push_str("2. **in_progress** - Worker is actively working (max 1 per worker)\n");
             content.push_str("3. **done** - Completed with summary\n\n");
+            content.push_str("### YAML Validation (CRITICAL)\n\n");
+            content.push_str("When editing tasks.yaml, you MUST ensure valid YAML:\n");
+            content.push_str("- Empty lists MUST use `[]`, never leave blank (e.g., `backlog: []` not `backlog:`)\n");
+            content.push_str("- After editing, validate with: `yq eval '.' <tasks-file> > /dev/null && echo 'Valid' || echo 'Invalid'`\n");
+            content.push_str("- If validation fails, fix the YAML before proceeding\n\n");
         }
     }
 

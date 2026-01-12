@@ -6,7 +6,7 @@ use crate::app::types::PaneType;
 
 /// Minimum dimensions for a worker pane to be usable
 const MIN_PANE_HEIGHT: u16 = 16;
-const MIN_PANE_WIDTH: u16 = 60;
+const MIN_PANE_WIDTH: u16 = 100;
 
 /// Get worker pane indices in visual order (matching sidebar display)
 /// Groups are shown first (in order of first appearance), then standalone panes

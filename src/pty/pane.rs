@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use portable_pty::{Child, MasterPty};
 
 use crate::app::types::PaneType;
-use crate::config::BranchConfig;
+use crate::config::{Backend, BranchConfig};
 
 use super::output::OutputBuffer;
 
@@ -23,6 +23,7 @@ pub struct Pane {
     pub branch: Option<BranchConfig>,
     pub group: Option<String>,
     pub visible: bool,
+    pub backend: Backend,
 }
 
 impl Pane {

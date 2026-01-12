@@ -11,7 +11,7 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 
 use crate::config::{ArchitectConfig, Backend, WorkersConfig};
 use crate::tasks::yaml::{LaneTasks, TasksFile, WorkerProtocol};
-use crate::workspace::{create_worktrees, slug_from_path, WorkspaceConfig, WorkspaceProject};
+use crate::workspace::{create_worktrees_with_symlinks, slug_from_path, WorkspaceConfig, WorkspaceProject};
 use crate::workspace::resolve::{create_workspace_dir, find_workspace_for_path};
 
 /// Run the workspace setup wizard
@@ -38,6 +38,7 @@ enum Step {
     SelectProjects,   // Select projects AND worker count per project
     NameLanes,        // Name lanes only for projects with 2+ workers
     Backends,
+    SymlinkFiles,     // Select files to symlink to worktrees
     Confirm,
     Creating,
     Done,
@@ -72,6 +73,13 @@ impl DiscoveredProject {
     }
 }
 
+/// A file that can be symlinked to worktrees
+#[derive(Debug, Clone)]
+struct SymlinkCandidate {
+    path: String,
+    selected: bool,
+}
+
 struct SetupState {
     step: Step,
     workspace_name: String,
@@ -88,6 +96,11 @@ struct SetupState {
     architect_backend: Backend,
     workers_backend: Backend,
     backend_selection: usize,
+    /// Discovered files that can be symlinked
+    symlink_candidates: Vec<SymlinkCandidate>,
+    symlink_cursor: usize,
+    /// Final list of files to symlink
+    symlink_files: Vec<String>,
     error_message: Option<String>,
 }
 
@@ -112,8 +125,40 @@ impl SetupState {
             architect_backend: Backend::Claude,
             workers_backend: Backend::Claude,
             backend_selection: 0,
+            symlink_candidates: Vec::new(),
+            symlink_cursor: 0,
+            symlink_files: Vec::new(),
             error_message: None,
         }
+    }
+
+    /// Scan selected projects for files that should be symlinked
+    fn scan_symlink_candidates(&mut self) {
+        let mut candidates = std::collections::HashSet::new();
+        let patterns = [".env", ".env.local", ".env.development", ".env.production", ".env.test"];
+
+        for project in self.discovered_projects.iter().filter(|p| p.selected) {
+            for pattern in &patterns {
+                let path = project.path.join(pattern);
+                if path.exists() {
+                    candidates.insert(pattern.to_string());
+                }
+            }
+        }
+
+        self.symlink_candidates = candidates
+            .into_iter()
+            .map(|path| SymlinkCandidate { path, selected: true }) // Default selected
+            .collect();
+        self.symlink_candidates.sort_by(|a, b| a.path.cmp(&b.path));
+    }
+
+    /// Check if any selected project will have worktrees (needs symlinks)
+    fn has_worktrees(&self) -> bool {
+        self.discovered_projects
+            .iter()
+            .filter(|p| p.selected)
+            .any(|p| p.workers > 1)
     }
 
     fn selected_projects(&self) -> Vec<&DiscoveredProject> {
@@ -342,7 +387,41 @@ fn handle_setup_key(state: &mut SetupState, key: KeyEvent, start_dir: &Path) -> 
                     state.workers_backend = toggle_backend(state.workers_backend);
                 }
             }
-            KeyCode::Enter => state.step = Step::Confirm,
+            KeyCode::Enter => {
+                // Only show symlink step if we have worktrees
+                if state.has_worktrees() {
+                    state.scan_symlink_candidates();
+                    state.step = Step::SymlinkFiles;
+                } else {
+                    state.step = Step::Confirm;
+                }
+            }
+            _ => {}
+        },
+
+        Step::SymlinkFiles => match key.code {
+            KeyCode::Up => {
+                state.symlink_cursor = state.symlink_cursor.saturating_sub(1);
+            }
+            KeyCode::Down => {
+                if !state.symlink_candidates.is_empty() {
+                    state.symlink_cursor = (state.symlink_cursor + 1).min(state.symlink_candidates.len() - 1);
+                }
+            }
+            KeyCode::Char(' ') => {
+                if let Some(candidate) = state.symlink_candidates.get_mut(state.symlink_cursor) {
+                    candidate.selected = !candidate.selected;
+                }
+            }
+            KeyCode::Enter => {
+                // Collect selected files
+                state.symlink_files = state.symlink_candidates
+                    .iter()
+                    .filter(|c| c.selected)
+                    .map(|c| c.path.clone())
+                    .collect();
+                state.step = Step::Confirm;
+            }
             _ => {}
         },
 
@@ -494,6 +573,8 @@ fn create_workspace(state: &SetupState) -> Result<PathBuf> {
         workers: WorkersConfig {
             backend: state.workers_backend,
             skip_permissions: false,
+            setup: Vec::new(),
+            symlink: state.symlink_files.clone(),
         },
     };
 
@@ -512,7 +593,7 @@ fn create_workspace(state: &SetupState) -> Result<PathBuf> {
     // Create worktrees for projects with multiple workers
     for project in &config.projects {
         if project.workers > 1 {
-            create_worktrees(&workspace_dir, project)?;
+            create_worktrees_with_symlinks(&workspace_dir, project, &config.workers.symlink)?;
         }
     }
 
@@ -529,6 +610,9 @@ fn create_workspace(state: &SetupState) -> Result<PathBuf> {
 }
 
 fn write_tasks(workspace_dir: &Path, config: &WorkspaceConfig) -> Result<()> {
+    use crate::tasks::yaml::ProjectEntry;
+    use crate::workspace::config::slug_from_path;
+
     let mut tasks = TasksFile::default();
     tasks.worker_protocol = Some(WorkerProtocol {
         claim: Some("Move the task to in_progress and add claimed_by/claimed_at".to_string()),
@@ -539,8 +623,21 @@ fn write_tasks(workspace_dir: &Path, config: &WorkspaceConfig) -> Result<()> {
         "Create a PR before starting a new task".to_string(),
     ]);
 
-    for lane in config.all_lanes() {
-        tasks.lanes.insert(lane, LaneTasks::default());
+    // Create project entries - nested for multi-lane, direct for single-lane
+    for project in &config.projects {
+        let project_slug = slug_from_path(&project.path);
+
+        if project.lanes.len() > 1 {
+            // Multi-lane project: nested structure
+            let mut lanes = std::collections::HashMap::new();
+            for lane in &project.lanes {
+                lanes.insert(lane.clone(), LaneTasks::default());
+            }
+            tasks.projects.insert(project_slug, ProjectEntry::Nested(lanes));
+        } else if let Some(lane) = project.lanes.first() {
+            // Single-lane project: direct structure (use lane name as key)
+            tasks.projects.insert(lane.clone(), ProjectEntry::Direct(LaneTasks::default()));
+        }
     }
 
     let tasks_path = workspace_dir.join("tasks.yaml");
@@ -572,7 +669,19 @@ fn write_architect_role(workspace_dir: &Path, config: &WorkspaceConfig) -> Resul
         "Tasks are stored in: {}/tasks.yaml\n\n",
         workspace_dir.display()
     ));
-    content.push_str("Add tasks to the appropriate lane's backlog. Workers will claim and complete them.\n");
+    content.push_str("Add tasks to the appropriate lane's backlog. Workers will claim and complete them.\n\n");
+
+    content.push_str("### Task Format\n\n");
+    content.push_str("```yaml\n<lane-name>:\n  backlog:\n    - id: my-task-id\n      title: Short title for the task\n      description: |\n        Detailed description of what needs to be done.\n      priority: high\n```\n\n");
+
+    content.push_str("### YAML Validation (CRITICAL)\n\n");
+    content.push_str("When editing tasks.yaml, you MUST ensure valid YAML:\n");
+    content.push_str("- Empty lists MUST use `[]`, never leave blank (e.g., `backlog: []` not `backlog:`)\n");
+    content.push_str(&format!(
+        "- After editing, validate with: `yq eval '.' {}/tasks.yaml > /dev/null && echo 'Valid' || echo 'Invalid'`\n",
+        workspace_dir.display()
+    ));
+    content.push_str("- If validation fails, fix the YAML before proceeding\n");
 
     let role_path = workspace_dir.join("ARCHITECT.md");
     std::fs::write(&role_path, content)
@@ -644,7 +753,16 @@ fn write_lane_roles(workspace_dir: &Path, config: &WorkspaceConfig) -> Result<()
             content.push_str(&format!("- Report \"No tasks in backlog for lane {}\"\n", lane));
             content.push_str("- Do NOT look for other work\n");
             content.push_str("- Do NOT explore the codebase\n");
-            content.push_str("- Simply wait for the architect to add tasks\n");
+            content.push_str("- Simply wait for the architect to add tasks\n\n");
+
+            content.push_str("## YAML Validation (CRITICAL)\n\n");
+            content.push_str("When editing tasks.yaml, you MUST ensure valid YAML:\n");
+            content.push_str("- Empty lists MUST use `[]`, never leave blank (e.g., `backlog: []` not `backlog:`)\n");
+            content.push_str(&format!(
+                "- After editing, validate with: `yq eval '.' {}/tasks.yaml > /dev/null && echo 'Valid' || echo 'Invalid'`\n",
+                workspace_dir.display()
+            ));
+            content.push_str("- If validation fails, fix the YAML before proceeding\n");
 
             let role_path = lane_dir.join("WORKER.md");
             std::fs::write(&role_path, content)
@@ -791,6 +909,30 @@ fn render_setup(frame: &mut ratatui::Frame, state: &SetupState) {
                 "".to_string(),
                 "Up/Down: select | Left/Right: toggle | Enter: continue".to_string(),
             ]
+        }
+
+        Step::SymlinkFiles => {
+            let mut lines = vec![
+                "Symlink files to worktrees".to_string(),
+                "".to_string(),
+                "These files exist in your projects but won't be in worktrees.".to_string(),
+                "Select which files to symlink:".to_string(),
+                "".to_string(),
+            ];
+
+            if state.symlink_candidates.is_empty() {
+                lines.push("  (No .env files found)".to_string());
+            } else {
+                for (i, candidate) in state.symlink_candidates.iter().enumerate() {
+                    let cursor = if i == state.symlink_cursor { ">" } else { " " };
+                    let check = if candidate.selected { "[x]" } else { "[ ]" };
+                    lines.push(format!("{} {} {}", cursor, check, candidate.path));
+                }
+            }
+
+            lines.push("".to_string());
+            lines.push("Up/Down: select | Space: toggle | Enter: continue".to_string());
+            lines
         }
 
         Step::Confirm => {

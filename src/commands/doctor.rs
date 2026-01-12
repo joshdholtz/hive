@@ -89,6 +89,8 @@ pub fn run(start_dir: &Path) -> Result<()> {
 }
 
 fn create_tasks_file(config: &crate::config::HiveConfig, path: &Path) -> Result<()> {
+    use crate::tasks::yaml::ProjectEntry;
+
     let mut tasks = TasksFile::default();
     tasks.worker_protocol = Some(WorkerProtocol {
         claim: Some("Move the task to in_progress and add claimed_by/claimed_at".to_string()),
@@ -99,10 +101,11 @@ fn create_tasks_file(config: &crate::config::HiveConfig, path: &Path) -> Result<
         "Create a PR before starting a new task".to_string(),
     ]);
 
+    // Legacy HiveConfig: all lanes are direct (no project nesting)
     for window in &config.windows {
         for worker in &window.workers {
             let lane = worker.lane.clone().unwrap_or_else(|| worker.id.clone());
-            tasks.lanes.entry(lane).or_insert_with(LaneTasks::default);
+            tasks.projects.entry(lane).or_insert_with(|| ProjectEntry::Direct(LaneTasks::default()));
         }
     }
 

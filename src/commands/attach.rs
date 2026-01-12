@@ -213,11 +213,9 @@ fn run_tui(
         // Clamp page if terminal resized
         app.clamp_worker_page(workers_per_page);
 
-        // Minimum PTY size - Codex needs larger minimums due to TUI caching issues
-        let (min_pty_rows, min_pty_cols) = match app.backend {
-            crate::config::Backend::Codex => (16, 60),
-            crate::config::Backend::Claude => (8, 40),
-        };
+        // Minimum PTY size - both need reasonable width for TUI status lines
+        let min_pty_rows = 16u16;
+        let min_pty_cols = 100u16;
 
         if !app.panes.is_empty() {
             let layout = crate::ui::layout::calculate_layout(app, pane_area, workers_per_page);
@@ -247,6 +245,20 @@ fn run_tui(
                 ServerMessage::State { state } => {
                     log_line(log_path, "apply-state");
                     app.apply_state(state);
+
+                    // Immediately resize buffers to current terminal size before processing output
+                    // This prevents replay from being processed at wrong size (24x80 default)
+                    if !app.panes.is_empty() {
+                        let layout = crate::ui::layout::calculate_layout(app, pane_area, workers_per_page);
+                        for (idx, rect) in &layout {
+                            let rows = rect.height.saturating_sub(2).max(min_pty_rows);
+                            let cols = rect.width.saturating_sub(2).max(min_pty_cols);
+                            if let Some(pane) = app.panes.get_mut(*idx) {
+                                pane.output_buffer.resize(rows, cols);
+                            }
+                        }
+                    }
+
                     for pane in &mut app.panes {
                         if let Some(data) = pending_output.remove(&pane.id) {
                             pane.output_buffer.push_bytes(&data);

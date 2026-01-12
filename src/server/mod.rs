@@ -70,6 +70,9 @@ fn run_workspace(config_path: &Path) -> Result<()> {
 
     let (nudge_tx, nudge_rx) = mpsc::channel::<NudgeRequest>();
 
+    let log_path = workspace_dir.join("server.log");
+    let _ = std::fs::write(&log_path, "");
+
     // Watch tasks file
     let tasks_path = workspace_dir.join("tasks.yaml");
     if tasks_path.exists() {
@@ -78,6 +81,7 @@ fn run_workspace(config_path: &Path) -> Result<()> {
             nudge_tx.clone(),
             Duration::from_secs(10),
             Duration::from_secs(5),
+            log_path.clone(),
         )
         .ok();
     }
@@ -88,9 +92,6 @@ fn run_workspace(config_path: &Path) -> Result<()> {
     let listener = UnixListener::bind(&socket_path)
         .with_context(|| format!("Failed to bind {}", socket_path.display()))?;
     listener.set_nonblocking(true)?;
-
-    let log_path = workspace_dir.join("server.log");
-    let _ = std::fs::write(&log_path, "");
 
     // Create a minimal HiveConfig for compatibility
     let compat_config = create_compat_config(&config, &workers);
@@ -152,6 +153,9 @@ fn run_legacy(config_path: &Path) -> Result<()> {
 
     let (nudge_tx, nudge_rx) = mpsc::channel::<NudgeRequest>();
 
+    let log_path = project_dir.join(".hive").join("server.log");
+    let _ = std::fs::write(&log_path, ""); // reset log
+
     let tasks_file = if let TaskSource::Yaml = config.tasks.source {
         let tasks_path = config::tasks_file_path(config_path, &config);
         spawn_yaml_watcher(
@@ -159,6 +163,7 @@ fn run_legacy(config_path: &Path) -> Result<()> {
             nudge_tx.clone(),
             Duration::from_secs(10),
             Duration::from_secs(5),
+            log_path.clone(),
         )
         .ok();
         Some(tasks_path)
@@ -172,9 +177,6 @@ fn run_legacy(config_path: &Path) -> Result<()> {
     let listener = UnixListener::bind(&socket_path)
         .with_context(|| format!("Failed to bind {}", socket_path.display()))?;
     listener.set_nonblocking(true)?;
-
-    let log_path = project_dir.join(".hive").join("server.log");
-    let _ = std::fs::write(&log_path, ""); // reset log
 
     let state = ServerState {
         config,
@@ -264,8 +266,10 @@ fn event_loop(
         while let Ok(req) = nudge_rx.try_recv() {
             match req {
                 NudgeRequest::All => {
+                    log_line(&state.log_path, "nudge-triggered");
                     refresh_task_counts(&mut state).ok();
-                    let _ = nudge_workers(&mut state, None);
+                    let nudged = nudge_workers(&mut state, None).unwrap_or_default();
+                    log_line(&state.log_path, &format!("nudge-result workers={:?}", nudged));
                     broadcast_state(&state, &mut clients);
                 }
             }
@@ -496,6 +500,7 @@ fn spawn_workspace_panes(
         branch: None,
         group: None,
         visible: true,
+        backend: config.architect.backend,
     });
 
     windows.push(AppWindow {
@@ -508,6 +513,11 @@ fn spawn_workspace_panes(
     let mut worker_pane_indices = Vec::new();
 
     for worker in workers {
+        // Run setup commands in worker's directory
+        for cmd in &config.workers.setup {
+            shell::run_shell_command(cmd, &worker.working_dir)?;
+        }
+
         let lane_role_path = workspace_dir.join("lanes").join(&worker.lane).join("WORKER.md");
         let startup_message = format!(
             "Read {}. Your lane is '{}'. Check {}/tasks.yaml for your tasks.",
@@ -539,6 +549,7 @@ fn spawn_workspace_panes(
             branch: None,
             group,
             visible: true,
+            backend: config.workers.backend,
         };
 
         panes.push(pane);
@@ -578,6 +589,8 @@ fn create_compat_config(
         workers: WorkersConfig {
             backend: config.workers.backend,
             skip_permissions: config.workers.skip_permissions,
+            setup: config.workers.setup.clone(),
+            symlink: config.workers.symlink.clone(),
         },
         session: config.name.clone(),
         tasks: TasksConfig {
@@ -628,6 +641,7 @@ fn spawn_panes(config: &HiveConfig, project_dir: &Path) -> Result<(Vec<Pane>, Ve
         branch: None,
         group: None,
         visible: true,
+        backend: config.architect.backend,
     });
 
     let architect_idx = 0;
@@ -663,6 +677,7 @@ fn spawn_panes(config: &HiveConfig, project_dir: &Path) -> Result<(Vec<Pane>, Ve
                 branch: worker.branch.clone(),
                 group,
                 visible: true,
+                backend: config.workers.backend,
             };
 
             panes.push(pane);
@@ -720,6 +735,8 @@ fn group_name_for_dir(working_dir: &Path, project_dir: &Path) -> Option<String> 
 fn nudge_workers(state: &mut ServerState, specific_worker: Option<&str>) -> Result<Vec<String>> {
     let mut nudged = Vec::new();
 
+    log_line(&state.log_path, &format!("nudge-workers task_counts={:?}", state.task_counts));
+
     for pane in &mut state.panes {
         let lane = match &pane.pane_type {
             PaneType::Worker { lane } => lane.clone(),
@@ -742,9 +759,35 @@ fn nudge_workers(state: &mut ServerState, specific_worker: Option<&str>) -> Resu
             counts.backlog > 0 && counts.in_progress == 0
         };
 
+        log_line(&state.log_path, &format!("nudge-check worker={} lane={} backlog={} in_progress={} should_nudge={} backend={:?}",
+            pane.id, lane, counts.backlog, counts.in_progress, should_nudge, pane.backend));
+
         if should_nudge {
             let message = build_nudge_message(&state.config, &lane, counts.backlog, &pane.branch);
-            crate::pty::send_to_pane(&mut pane.writer, &message)?;
+
+            // For TUI apps like Codex/Claude, send message character by character
+            // to mimic actual typing. TUI apps process keystrokes one at a time
+            // and may not handle bulk input correctly.
+            //
+            // NOTE: If this still doesn't work, consider:
+            // - Codex: `codex exec resume --last "nudge message"`
+            // See: https://developers.openai.com/codex/cli/reference/
+
+            // Send each character individually, like actual typing
+            for byte in message.bytes() {
+                crate::pty::send_bytes(&mut pane.writer, &[byte])?;
+                // Small delay between characters to let TUI process
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+
+            // Longer delay before Enter to let TUI fully process
+            std::thread::sleep(std::time::Duration::from_millis(50));
+
+            // Send Enter to submit (CR is what terminals send for Enter)
+            crate::pty::send_bytes(&mut pane.writer, b"\r")?;
+
+            log_line(&state.log_path, &format!("nudge-sent worker={} backend={:?} message_len={} (char-by-char)", pane.id, pane.backend, message.len()));
+
             nudged.push(pane.id.clone());
         }
     }
@@ -754,16 +797,29 @@ fn nudge_workers(state: &mut ServerState, specific_worker: Option<&str>) -> Resu
 
 fn refresh_task_counts(state: &mut ServerState) -> Result<()> {
     let Some(tasks_file) = &state.tasks_file else {
+        log_line(&state.log_path, "refresh_task_counts: no tasks_file");
         return Ok(());
     };
 
-    let tasks = load_tasks(tasks_file)?;
+    log_line(&state.log_path, &format!("refresh_task_counts: loading {}", tasks_file.display()));
+
+    let tasks = match load_tasks(tasks_file) {
+        Ok(t) => t,
+        Err(e) => {
+            log_line(&state.log_path, &format!("refresh_task_counts: load error: {}", e));
+            return Err(e);
+        }
+    };
+
+    log_line(&state.log_path, &format!("refresh_task_counts: loaded tasks, projects={:?}", tasks.projects.keys().collect::<Vec<_>>()));
+
     let mut counts = HashMap::new();
 
     for window in &state.config.windows {
         for worker in &window.workers {
             let lane = worker.lane.clone().unwrap_or_else(|| worker.id.clone());
             let lane_counts = counts_for_lane(&tasks, &lane);
+            log_line(&state.log_path, &format!("refresh_task_counts: lane={} counts={:?}", lane, lane_counts));
             counts.insert(lane, lane_counts);
         }
     }

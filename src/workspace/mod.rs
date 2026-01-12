@@ -6,4 +6,4 @@ pub use config::{expand_workers, slug_from_path, RuntimeWorker, WorkerBranch, Wo
 pub use resolve::{
     find_workspace_for_path, list_workspaces, workspace_dir, workspaces_dir, WorkspaceMeta,
 };
-pub use worktree::{create_worktrees, remove_worktrees, worker_directory};
+pub use worktree::{create_worktrees, create_worktrees_with_symlinks, remove_worktrees, worker_directory};

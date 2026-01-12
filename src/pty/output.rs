@@ -17,12 +17,15 @@ impl OutputBuffer {
 
     pub fn resize(&mut self, rows: u16, cols: u16) {
         self.parser.set_size(rows, cols);
-        self.scroll_offset = 0;
-        self.parser.set_scrollback(0);
+        // Don't reset scroll_offset or scrollback - preserve history on resize
+        // This prevents content from disappearing when zooming/resizing panes
     }
 
     pub fn push_bytes(&mut self, data: &[u8]) {
-        self.parser.process(data);
+        // Filter out escape sequences that clear scrollback (ESC[3J)
+        // Claude Code sends these which would wipe our history
+        let filtered = filter_scrollback_clear(data);
+        self.parser.process(&filtered);
         if self.scroll_offset > 0 {
             self.parser.set_scrollback(self.scroll_offset);
         }
@@ -60,4 +63,38 @@ impl OutputBuffer {
         self.scroll_offset = 0;
         self.parser.set_scrollback(0);
     }
+}
+
+/// Filter out ANSI escape sequences that clear scrollback buffer
+/// ESC[3J clears scrollback, ESC[2J clears screen - we preserve screen clear but not scrollback
+fn filter_scrollback_clear(data: &[u8]) -> Vec<u8> {
+    let mut result = Vec::with_capacity(data.len());
+    let mut i = 0;
+
+    while i < data.len() {
+        // Check for ESC sequence
+        if data[i] == 0x1B && i + 1 < data.len() && data[i + 1] == b'[' {
+            // Find the end of the CSI sequence (letter)
+            let mut j = i + 2;
+            while j < data.len() && (data[j].is_ascii_digit() || data[j] == b';') {
+                j += 1;
+            }
+
+            // Check if this is ESC[3J (clear scrollback)
+            if j < data.len() && data[j] == b'J' {
+                // Check the parameter - ESC[3J clears scrollback
+                let params = &data[i + 2..j];
+                if params == b"3" {
+                    // Skip this sequence entirely
+                    i = j + 1;
+                    continue;
+                }
+            }
+        }
+
+        result.push(data[i]);
+        i += 1;
+    }
+
+    result
 }

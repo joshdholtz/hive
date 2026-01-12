@@ -26,6 +26,12 @@ pub struct WorkersConfig {
     /// Skip all permission prompts (Claude: --dangerously-skip-permissions)
     #[serde(default)]
     pub skip_permissions: bool,
+    /// Setup commands to run in each worker's directory before starting
+    #[serde(default)]
+    pub setup: Vec<String>,
+    /// Files to symlink from main repo to worktrees (e.g., .env)
+    #[serde(default)]
+    pub symlink: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy)]
