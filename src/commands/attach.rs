@@ -623,6 +623,26 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent, workers
     } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char(']') {
         // Next page of workers
         app.next_worker_page(workers_per_page);
+    } else if key.code == KeyCode::PageUp {
+        // Scroll up in focused pane
+        if let Some(pane) = app.panes.get_mut(app.focused_pane) {
+            pane.output_buffer.scroll_up(10);
+        }
+    } else if key.code == KeyCode::PageDown {
+        // Scroll down in focused pane
+        if let Some(pane) = app.panes.get_mut(app.focused_pane) {
+            pane.output_buffer.scroll_down(10);
+        }
+    } else if key.code == KeyCode::Home && key.modifiers.contains(KeyModifiers::CONTROL) {
+        // Scroll to top of focused pane
+        if let Some(pane) = app.panes.get_mut(app.focused_pane) {
+            pane.output_buffer.scroll_to_top();
+        }
+    } else if key.code == KeyCode::End && key.modifiers.contains(KeyModifiers::CONTROL) {
+        // Scroll to bottom of focused pane
+        if let Some(pane) = app.panes.get_mut(app.focused_pane) {
+            pane.output_buffer.scroll_to_bottom();
+        }
     } else {
         let bytes = key_to_bytes(key);
         if !bytes.is_empty() {
