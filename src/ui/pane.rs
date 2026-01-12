@@ -11,35 +11,45 @@ pub fn render_pane(
     area: Rect,
     pane: &ClientPane,
     focused: bool,
-    nav_mode: bool,
     sidebar_focused: bool,
 ) {
-    let border_style = if focused {
-        if nav_mode {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::Yellow)
-        }
+    let (border_color, title_color) = if focused {
+        (Color::Yellow, Color::Yellow)
     } else {
-        Style::default().fg(Color::DarkGray)
+        (Color::DarkGray, Color::Blue)
     };
 
+    let border_style = Style::default().fg(border_color);
+
+    // Build title: "group/lane" or just "lane" (or "architect")
+    // Don't show group prefix if group name matches lane name
     let mut title = match &pane.pane_type {
         PaneType::Architect => "architect".to_string(),
-        PaneType::Worker { lane } => lane.clone(),
+        PaneType::Worker { lane } => {
+            if let Some(group) = &pane.group {
+                if group != lane {
+                    format!("{}/{}", group, lane)
+                } else {
+                    lane.clone()
+                }
+            } else {
+                lane.clone()
+            }
+        }
     };
     let scroll_offset = pane.output_buffer.scroll_offset();
     if scroll_offset > 0 {
         title.push_str(&format!(" [scroll {}]", scroll_offset));
     }
 
+    let title_style = Style::default().fg(title_color);
     let block = Block::default()
-        .title(title)
+        .title(Line::from(title).style(title_style))
         .borders(Borders::ALL)
         .border_style(border_style);
     let inner = block.inner(area);
 
-    let terminal_style = if (nav_mode || sidebar_focused) && !focused {
+    let terminal_style = if sidebar_focused && !focused {
         Style::default().fg(Color::DarkGray)
     } else {
         Style::default()
@@ -51,7 +61,7 @@ pub fn render_pane(
 
     frame.render_widget(terminal, area);
 
-    if (nav_mode || sidebar_focused) && !focused {
+    if sidebar_focused && !focused {
         frame
             .buffer_mut()
             .set_style(inner, Style::default().add_modifier(Modifier::DIM));

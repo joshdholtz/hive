@@ -13,6 +13,7 @@ pub enum PaletteAction {
     FocusPrev,
     FocusPane(usize),
     ToggleZoom,
+    ToggleArchitectPosition,
     ToggleSidebar,
     FocusSidebar,
     ProjectManager,
@@ -48,6 +49,10 @@ pub fn build_items(app: &App) -> Vec<PaletteItem> {
         PaletteItem {
             label: "Toggle zoom".to_string(),
             action: PaletteAction::ToggleZoom,
+        },
+        PaletteItem {
+            label: "Architect position (top/left)".to_string(),
+            action: PaletteAction::ToggleArchitectPosition,
         },
         PaletteItem {
             label: "Nudge all workers".to_string(),

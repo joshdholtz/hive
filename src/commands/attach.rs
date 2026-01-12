@@ -359,6 +359,10 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent, workers
                                 app.focused_pane = idx
                             }
                             crate::app::palette::PaletteAction::ToggleZoom => app.toggle_zoom(),
+                            crate::app::palette::PaletteAction::ToggleArchitectPosition => {
+                                app.toggle_architect_position();
+                                conn.send(ClientMessage::SetArchitectLeft { left: app.architect_left })?;
+                            }
                             crate::app::palette::PaletteAction::ToggleSidebar => {
                                 app.sidebar.visible = !app.sidebar.visible;
                                 if !app.sidebar.visible {
@@ -368,7 +372,6 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent, workers
                             crate::app::palette::PaletteAction::FocusSidebar => {
                                 if app.sidebar.visible {
                                     app.sidebar.focused = true;
-                                    app.nav_mode = false;
                                 }
                             }
                             crate::app::palette::PaletteAction::ProjectManager => {
@@ -412,6 +415,10 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent, workers
                                 app.focused_pane = pane_idx
                             }
                             crate::app::palette::PaletteAction::ToggleZoom => app.toggle_zoom(),
+                            crate::app::palette::PaletteAction::ToggleArchitectPosition => {
+                                app.toggle_architect_position();
+                                conn.send(ClientMessage::SetArchitectLeft { left: app.architect_left })?;
+                            }
                             crate::app::palette::PaletteAction::ToggleSidebar => {
                                 app.sidebar.visible = !app.sidebar.visible;
                                 if !app.sidebar.visible {
@@ -421,7 +428,6 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent, workers
                             crate::app::palette::PaletteAction::FocusSidebar => {
                                 if app.sidebar.visible {
                                     app.sidebar.focused = true;
-                                    app.nav_mode = false;
                                 }
                             }
                             crate::app::palette::PaletteAction::ProjectManager => {
@@ -526,122 +532,35 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent, workers
         return Ok(false);
     }
 
-    if app.nav_mode {
-        // Calculate current layout for grid navigation
-        let layout = crate::ui::layout::calculate_layout(app, pane_area, workers_per_page);
-        let has_architect = app.panes.iter().any(|p| {
-            p.visible && matches!(p.pane_type, crate::app::types::PaneType::Architect)
-        });
-
-        match key.code {
-            KeyCode::Esc => app.nav_mode = false,
-            KeyCode::Up => {
-                // Move up in grid
-                navigate_grid(app, &layout, has_architect, 0, -1, workers_per_page);
-            }
-            KeyCode::Down => {
-                // Move down in grid
-                navigate_grid(app, &layout, has_architect, 0, 1, workers_per_page);
-            }
-            KeyCode::Left => {
-                // Move left in grid
-                navigate_grid(app, &layout, has_architect, -1, 0, workers_per_page);
-            }
-            KeyCode::Right => {
-                // Move right in grid
-                navigate_grid(app, &layout, has_architect, 1, 0, workers_per_page);
-            }
-            KeyCode::Char('h') => {
-                // Move left in grid
-                navigate_grid(app, &layout, has_architect, -1, 0, workers_per_page);
-            }
-            KeyCode::Char('j') => {
-                // Move down in grid
-                navigate_grid(app, &layout, has_architect, 0, 1, workers_per_page);
-            }
-            KeyCode::Char('k') => {
-                // Move up in grid
-                navigate_grid(app, &layout, has_architect, 0, -1, workers_per_page);
-            }
-            KeyCode::Char('l') => {
-                // Move right in grid
-                navigate_grid(app, &layout, has_architect, 1, 0, workers_per_page);
-            }
-            KeyCode::Tab if app.sidebar.visible => {
-                app.sidebar.focused = true;
-                app.nav_mode = false;
-            }
-            KeyCode::Char('z') => app.toggle_zoom(),
-            KeyCode::Char('?') => app.show_help = !app.show_help,
-            KeyCode::Char('p') => {
-                // Open command palette
-                app.show_palette = true;
-                app.palette_query.clear();
-                app.palette_selection = 0;
-            }
-            KeyCode::Char('n') => {
-                conn.send(ClientMessage::Nudge { worker: None })?;
-            }
-            KeyCode::Char('N') => {
-                if let Some(pane) = app.panes.get(app.focused_pane) {
-                    conn.send(ClientMessage::Nudge {
-                        worker: Some(pane.id.clone()),
-                    })?;
-                }
-            }
-            KeyCode::Enter => app.nav_mode = false,
-            KeyCode::Char('d') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                conn.send(ClientMessage::Detach)?;
-                return Ok(true);
-            }
-            KeyCode::Char('[') => {
-                app.prev_worker_page();
-            }
-            KeyCode::Char(']') => {
-                app.next_worker_page(workers_per_page);
-            }
-            KeyCode::PageUp => {
-                if let Some(pane) = app.panes.get_mut(app.focused_pane) {
-                    pane.output_buffer.scroll_up(10);
-                }
-            }
-            KeyCode::PageDown => {
-                if let Some(pane) = app.panes.get_mut(app.focused_pane) {
-                    pane.output_buffer.scroll_down(10);
-                }
-            }
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                if let Some(pane) = app.panes.get_mut(app.focused_pane) {
-                    pane.output_buffer.scroll_up(15);
-                }
-            }
-            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                if let Some(pane) = app.panes.get_mut(app.focused_pane) {
-                    pane.output_buffer.scroll_down(15);
-                }
-            }
-            KeyCode::Home => {
-                if let Some(pane) = app.panes.get_mut(app.focused_pane) {
-                    pane.output_buffer.scroll_to_top();
-                }
-            }
-            KeyCode::End => {
-                if let Some(pane) = app.panes.get_mut(app.focused_pane) {
-                    pane.output_buffer.scroll_to_bottom();
-                }
-            }
-            _ => {}
-        }
-        return Ok(false);
-    }
-
     // Sidebar reordering with Ctrl+U/D (only when sidebar focused)
     if app.sidebar.focused && app.sidebar.visible {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('u') {
-            app.sidebar.reorder_up(&mut app.panes);
+            // Preserve focused pane by ID across reorder
+            let focused_id = app.panes.get(app.focused_pane).map(|p| p.id.clone());
+            if app.sidebar.reorder_up(&mut app.panes) {
+                // Restore focused_pane to point to the same pane by ID
+                if let Some(id) = focused_id {
+                    if let Some(new_idx) = app.panes.iter().position(|p| p.id == id) {
+                        app.focused_pane = new_idx;
+                    }
+                }
+                let pane_ids: Vec<String> = app.panes.iter().map(|p| p.id.clone()).collect();
+                conn.send(ClientMessage::ReorderPanes { pane_ids })?;
+            }
             return Ok(false);
         } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('d') {
-            app.sidebar.reorder_down(&mut app.panes);
+            // Preserve focused pane by ID across reorder
+            let focused_id = app.panes.get(app.focused_pane).map(|p| p.id.clone());
+            if app.sidebar.reorder_down(&mut app.panes) {
+                // Restore focused_pane to point to the same pane by ID
+                if let Some(id) = focused_id {
+                    if let Some(new_idx) = app.panes.iter().position(|p| p.id == id) {
+                        app.focused_pane = new_idx;
+                    }
+                }
+                let pane_ids: Vec<String> = app.panes.iter().map(|p| p.id.clone()).collect();
+                conn.send(ClientMessage::ReorderPanes { pane_ids })?;
+            }
             return Ok(false);
         }
     }
@@ -682,6 +601,10 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent, workers
     } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s') {
         // Toggle smart mode (only show active panes)
         app.smart_mode = !app.smart_mode;
+    } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {
+        // Open command palette
+        app.show_palette = true;
+        app.palette_query.clear();
     } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('[') {
         // Previous page of workers
         app.prev_worker_page();
@@ -832,68 +755,74 @@ fn navigate_grid(
         return;
     };
 
+    // Calculate target position
     let new_col = (pos.col as i32 + dx).max(0) as usize;
     let new_row = (pos.row as i32 + dy).max(0) as usize;
 
-    // Check for page change on vertical movement
-    if dy > 0 && new_row >= pos.num_rows {
-        // Moving down past bottom - try next page
+    // For vertical movement (j/k), just navigate within the current page
+    if dy != 0 {
+        // Don't go above row 0
+        if dy < 0 && pos.row == 0 {
+            return;
+        }
+        // Don't go below the last row
+        if dy > 0 && new_row >= pos.num_rows {
+            return;
+        }
+        // Normal vertical navigation
+        if let Some(new_idx) = get_pane_at_position(layout, new_row, pos.col, has_architect) {
+            app.focused_pane = new_idx;
+        }
+        return;
+    }
+
+    // For horizontal movement (h/l), check for page changes at edges
+    if dx < 0 && pos.col == 0 {
+        // Moving left at left edge - change page from any row
+        if app.worker_page > 0 {
+            app.worker_page -= 1;
+            // Focus the last worker on the previous page
+            focus_worker_on_page(app, app.worker_page, workers_per_page, true);
+        }
+        return;
+    }
+
+    if dx > 0 && new_col >= pos.num_cols {
+        // Moving right at right edge - change page from any row
         let total_pages = app.total_worker_pages(workers_per_page);
         if app.worker_page + 1 < total_pages {
             app.worker_page += 1;
-            // Focus first worker on new page (skip architect row if present)
-            let start_row = if has_architect { 1 } else { 0 };
-            if let Some(new_idx) = get_pane_at_position(layout, start_row, pos.col, has_architect) {
-                app.focused_pane = new_idx;
-            }
+            // Focus the first worker on the new page
+            focus_worker_on_page(app, app.worker_page, workers_per_page, false);
         }
         return;
     }
 
-    if dy < 0 && pos.row == 0 {
-        // Already at top row, can't go up further
-        return;
-    }
-
-    if dy < 0 && has_architect && pos.row == 1 && app.worker_page > 0 {
-        // Moving up from first worker row - go to previous page
-        app.worker_page -= 1;
-        return;
-    }
-
-    // Check for page change on horizontal movement at edges
-    if dx > 0 && new_col >= pos.num_cols {
-        // Moving right past edge
-        if !pos.is_architect {
-            // Check if we're at the last item and there's a next page
-            let total_pages = app.total_worker_pages(workers_per_page);
-            if app.worker_page + 1 < total_pages {
-                // Check if at last position in grid
-                let last_worker_row = pos.num_rows - 1;
-                if pos.row == last_worker_row || (has_architect && pos.row == pos.num_rows - 1) {
-                    app.worker_page += 1;
-                    return;
-                }
-            }
-        }
-        return;
-    }
-
-    if dx < 0 && pos.col == 0 {
-        // Moving left past edge
-        if !pos.is_architect && app.worker_page > 0 {
-            // Check if at first worker position
-            let first_worker_row = if has_architect { 1 } else { 0 };
-            if pos.row == first_worker_row {
-                app.worker_page -= 1;
-                return;
-            }
-        }
-        return;
-    }
-
-    // Normal navigation within current page
+    // Normal horizontal navigation within current page
     if let Some(new_idx) = get_pane_at_position(layout, new_row, new_col, has_architect) {
         app.focused_pane = new_idx;
+    }
+}
+
+/// Focus a worker on a specific page
+fn focus_worker_on_page(app: &mut App, page: usize, workers_per_page: usize, last: bool) {
+    // Use the same visual order as the layout calculation
+    let workers = crate::ui::layout::get_workers_in_visual_order(app);
+
+    // Get workers on the target page
+    let page_start = page * workers_per_page;
+    let page_workers: Vec<usize> = workers
+        .into_iter()
+        .skip(page_start)
+        .take(workers_per_page)
+        .collect();
+
+    // Focus first or last worker on the page
+    if last {
+        if let Some(&idx) = page_workers.last() {
+            app.focused_pane = idx;
+        }
+    } else if let Some(&idx) = page_workers.first() {
+        app.focused_pane = idx;
     }
 }

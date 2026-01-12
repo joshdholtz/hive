@@ -39,8 +39,6 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &App, workers_per_p
         "PALETTE"
     } else if app.sidebar.focused {
         "SIDEBAR"
-    } else if app.nav_mode {
-        "NAV"
     } else {
         "INPUT"
     };

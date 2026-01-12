@@ -32,6 +32,8 @@ pub struct AppState {
     pub panes: Vec<PaneInfo>,
     pub windows: Vec<WindowInfo>,
     pub task_counts: HashMap<String, TaskCounts>,
+    #[serde(default)]
+    pub architect_left: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -47,6 +49,8 @@ pub enum ClientMessage {
     Resize { panes: Vec<PaneSize> },
     Nudge { worker: Option<String> },
     SetVisibility { pane_id: String, visible: bool },
+    ReorderPanes { pane_ids: Vec<String> },
+    SetArchitectLeft { left: bool },
     Layout { mode: LayoutMode },
     Detach,
     Shutdown,

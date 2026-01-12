@@ -64,7 +64,6 @@ fn render_panes(frame: &mut Frame, area: Rect, app: &App) -> usize {
             rect,
             &app.panes[idx],
             focused,
-            app.nav_mode,
             app.sidebar.focused,
         );
     }

@@ -51,7 +51,6 @@ pub struct App {
     pub focused_window: usize,
     pub show_help: bool,
     pub prefix_mode: bool,
-    pub nav_mode: bool,
     pub sidebar: SidebarState,
     pub show_palette: bool,
     pub palette_query: String,
@@ -67,6 +66,7 @@ pub struct App {
     pub zoomed: bool,
     pub worker_page: usize,
     pub smart_mode: bool,
+    pub architect_left: bool,
 }
 
 impl App {
@@ -87,7 +87,6 @@ impl App {
             focused_window: 0,
             show_help: false,
             prefix_mode: false,
-            nav_mode: false,
             sidebar: SidebarState::new(),
             show_palette: false,
             palette_query: String::new(),
@@ -103,7 +102,12 @@ impl App {
             zoomed: false,
             worker_page: 0,
             smart_mode: false,
+            architect_left: false,
         }
+    }
+
+    pub fn toggle_architect_position(&mut self) {
+        self.architect_left = !self.architect_left;
     }
 
     /// Check if a pane has work (tasks in progress or backlog)
@@ -211,6 +215,7 @@ impl App {
         self.backend = state.backend;
         self.layout_mode = state.layout_mode;
         self.task_counts = state.task_counts;
+        self.architect_left = state.architect_left;
 
         self.windows = state
             .windows

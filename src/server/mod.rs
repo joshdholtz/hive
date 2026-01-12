@@ -51,7 +51,11 @@ fn run_workspace(config_path: &Path) -> Result<()> {
 
     let layout_mode = load_layout_mode(&workspace_dir).unwrap_or(LayoutMode::Default);
 
-    let (panes, windows) = spawn_workspace_panes(&config, &workspace_dir, &workers)?;
+    let (mut panes, windows) = spawn_workspace_panes(&config, &workspace_dir, &workers)?;
+
+    // Apply saved UI state (order and visibility)
+    let ui_state = load_ui_state(&workspace_dir);
+    apply_ui_state(&mut panes, &ui_state);
 
     let (event_tx, event_rx) = mpsc::channel::<ServerEvent>();
     let (pane_tx, pane_rx) = mpsc::channel::<PaneEvent>();
@@ -100,6 +104,7 @@ fn run_workspace(config_path: &Path) -> Result<()> {
         task_counts: HashMap::new(),
         tasks_file: Some(tasks_path),
         log_path,
+        architect_left: ui_state.architect_left,
     };
 
     write_workspace_pid(&workspace_dir)?;
@@ -128,7 +133,11 @@ fn run_legacy(config_path: &Path) -> Result<()> {
 
     let layout_mode = load_layout_mode(&project_dir).unwrap_or(LayoutMode::Default);
 
-    let (panes, windows) = spawn_panes(&config, &project_dir)?;
+    let (mut panes, windows) = spawn_panes(&config, &project_dir)?;
+
+    // Apply saved UI state (order and visibility)
+    let ui_state = load_ui_state(&project_dir);
+    apply_ui_state(&mut panes, &ui_state);
 
     let (event_tx, event_rx) = mpsc::channel::<ServerEvent>();
     let (pane_tx, pane_rx) = mpsc::channel::<PaneEvent>();
@@ -176,6 +185,7 @@ fn run_legacy(config_path: &Path) -> Result<()> {
         task_counts: HashMap::new(),
         tasks_file,
         log_path,
+        architect_left: ui_state.architect_left,
     };
 
     write_pid(&state.project_dir)?;
@@ -196,6 +206,7 @@ struct ServerState {
     task_counts: HashMap<String, crate::tasks::TaskCounts>,
     tasks_file: Option<PathBuf>,
     log_path: PathBuf,
+    architect_left: bool,
 }
 
 enum ServerEvent {
@@ -406,8 +417,28 @@ fn handle_client_message(
         ClientMessage::SetVisibility { pane_id, visible } => {
             if let Some(pane) = state.panes.iter_mut().find(|p| p.id == pane_id) {
                 pane.visible = visible;
+                save_ui_state(&state.project_dir, state);
                 broadcast_state(state, clients);
             }
+        }
+        ClientMessage::ReorderPanes { pane_ids } => {
+            // Reorder panes according to the provided order
+            let mut new_order: Vec<Pane> = Vec::with_capacity(state.panes.len());
+            for id in &pane_ids {
+                if let Some(pos) = state.panes.iter().position(|p| &p.id == id) {
+                    new_order.push(state.panes.remove(pos));
+                }
+            }
+            // Append any panes not in the list (shouldn't happen, but be safe)
+            new_order.append(&mut state.panes);
+            state.panes = new_order;
+            save_ui_state(&state.project_dir, state);
+            broadcast_state(state, clients);
+        }
+        ClientMessage::SetArchitectLeft { left } => {
+            state.architect_left = left;
+            save_ui_state(&state.project_dir, state);
+            broadcast_state(state, clients);
         }
         ClientMessage::Layout { mode } => {
             state.layout_mode = mode;
@@ -784,6 +815,7 @@ fn build_state(state: &ServerState) -> AppState {
             })
             .collect(),
         task_counts: state.task_counts.clone(),
+        architect_left: state.architect_left,
     }
 }
 
@@ -843,6 +875,70 @@ fn write_layout_mode(project_dir: &Path, mode: LayoutMode) -> Result<()> {
     };
     std::fs::write(path, value)?;
     Ok(())
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+struct UiState {
+    pane_order: Vec<String>,
+    visibility: HashMap<String, bool>,
+    #[serde(default)]
+    architect_left: bool,
+}
+
+fn ui_state_path(project_dir: &Path) -> PathBuf {
+    // For workspaces, files are stored directly in the workspace dir
+    // For single projects, files are stored in .hive subdirectory
+    let hive_subdir = project_dir.join(".hive");
+    if hive_subdir.is_dir() {
+        hive_subdir.join("ui-state.json")
+    } else {
+        project_dir.join("ui-state.json")
+    }
+}
+
+fn load_ui_state(project_dir: &Path) -> UiState {
+    let path = ui_state_path(project_dir);
+    if !path.exists() {
+        return UiState::default();
+    }
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_ui_state(project_dir: &Path, state: &ServerState) {
+    let ui_state = UiState {
+        pane_order: state.panes.iter().map(|p| p.id.clone()).collect(),
+        visibility: state.panes.iter().map(|p| (p.id.clone(), p.visible)).collect(),
+        architect_left: state.architect_left,
+    };
+    let path = ui_state_path(project_dir);
+    if let Ok(json) = serde_json::to_string_pretty(&ui_state) {
+        let _ = std::fs::write(path, json);
+    }
+}
+
+fn apply_ui_state(panes: &mut Vec<Pane>, ui_state: &UiState) {
+    // Apply visibility
+    for pane in panes.iter_mut() {
+        if let Some(&visible) = ui_state.visibility.get(&pane.id) {
+            pane.visible = visible;
+        }
+    }
+
+    // Apply order if we have saved order
+    if !ui_state.pane_order.is_empty() {
+        let mut new_order: Vec<Pane> = Vec::with_capacity(panes.len());
+        for id in &ui_state.pane_order {
+            if let Some(pos) = panes.iter().position(|p| &p.id == id) {
+                new_order.push(panes.remove(pos));
+            }
+        }
+        // Append any new panes not in saved order
+        new_order.append(panes);
+        *panes = new_order;
+    }
 }
 
 fn log_line(path: &Path, line: &str) {
