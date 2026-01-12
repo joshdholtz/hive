@@ -281,7 +281,7 @@ fn run_tui(
             Ok(true) => {
                 match event::read() {
                     Ok(Event::Key(key)) => {
-                        if handle_key_event(app, conn, key, workers_per_page)? {
+                        if handle_key_event(app, conn, key, workers_per_page, pane_area)? {
                             break;
                         }
                     }
@@ -311,7 +311,7 @@ fn run_tui(
     Ok(())
 }
 
-fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent, workers_per_page: usize) -> Result<bool> {
+fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent, workers_per_page: usize, pane_area: Rect) -> Result<bool> {
     if app.show_help {
         if matches!(key.code, KeyCode::Esc | KeyCode::Char('?')) {
             app.show_help = false;
@@ -527,20 +527,58 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent, workers
     }
 
     if app.nav_mode {
+        // Calculate current layout for grid navigation
+        let layout = crate::ui::layout::calculate_layout(app, pane_area, workers_per_page);
+        let has_architect = app.panes.iter().any(|p| {
+            p.visible && matches!(p.pane_type, crate::app::types::PaneType::Architect)
+        });
+
         match key.code {
             KeyCode::Esc => app.nav_mode = false,
-            KeyCode::Up | KeyCode::Left => app.focus_prev(&visible),
-            KeyCode::Down | KeyCode::Right => app.focus_next(&visible),
-            KeyCode::Char('h') => app.focus_prev(&visible),
-            KeyCode::Char('j') => app.focus_next(&visible),
-            KeyCode::Char('k') => app.focus_prev(&visible),
-            KeyCode::Char('l') => app.focus_next(&visible),
+            KeyCode::Up => {
+                // Move up in grid
+                navigate_grid(app, &layout, has_architect, 0, -1, workers_per_page);
+            }
+            KeyCode::Down => {
+                // Move down in grid
+                navigate_grid(app, &layout, has_architect, 0, 1, workers_per_page);
+            }
+            KeyCode::Left => {
+                // Move left in grid
+                navigate_grid(app, &layout, has_architect, -1, 0, workers_per_page);
+            }
+            KeyCode::Right => {
+                // Move right in grid
+                navigate_grid(app, &layout, has_architect, 1, 0, workers_per_page);
+            }
+            KeyCode::Char('h') => {
+                // Move left in grid
+                navigate_grid(app, &layout, has_architect, -1, 0, workers_per_page);
+            }
+            KeyCode::Char('j') => {
+                // Move down in grid
+                navigate_grid(app, &layout, has_architect, 0, 1, workers_per_page);
+            }
+            KeyCode::Char('k') => {
+                // Move up in grid
+                navigate_grid(app, &layout, has_architect, 0, -1, workers_per_page);
+            }
+            KeyCode::Char('l') => {
+                // Move right in grid
+                navigate_grid(app, &layout, has_architect, 1, 0, workers_per_page);
+            }
             KeyCode::Tab if app.sidebar.visible => {
                 app.sidebar.focused = true;
                 app.nav_mode = false;
             }
             KeyCode::Char('z') => app.toggle_zoom(),
             KeyCode::Char('?') => app.show_help = !app.show_help,
+            KeyCode::Char('p') => {
+                // Open command palette
+                app.show_palette = true;
+                app.palette_query.clear();
+                app.palette_selection = 0;
+            }
             KeyCode::Char('n') => {
                 conn.send(ClientMessage::Nudge { worker: None })?;
             }
@@ -608,19 +646,24 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent, workers
         }
     }
 
+    // Calculate layout for grid navigation
+    let layout = crate::ui::layout::calculate_layout(app, pane_area, workers_per_page);
+    let has_architect = app.panes.iter().any(|p| {
+        p.visible && matches!(p.pane_type, crate::app::types::PaneType::Architect)
+    });
+
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('h') {
-        // Focus previous pane
-        app.focus_prev(&visible);
+        // Move left in grid
+        navigate_grid(app, &layout, has_architect, -1, 0, workers_per_page);
     } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('j') {
-        // Focus next pane
-        app.focus_next(&visible);
-    } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('l') {
-        // Focus next pane
-        app.focus_next(&visible);
+        // Move down in grid
+        navigate_grid(app, &layout, has_architect, 0, 1, workers_per_page);
     } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('k') {
-        app.show_palette = true;
-        app.palette_query.clear();
-        app.palette_selection = 0;
+        // Move up in grid
+        navigate_grid(app, &layout, has_architect, 0, -1, workers_per_page);
+    } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('l') {
+        // Move right in grid
+        navigate_grid(app, &layout, has_architect, 1, 0, workers_per_page);
     } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('o') {
         // Toggle sidebar (and focus it when opening)
         app.sidebar.visible = !app.sidebar.visible;
@@ -633,11 +676,6 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent, workers
         // Detach from session
         conn.send(ClientMessage::Detach)?;
         return Ok(true);
-    } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {
-        // Open pane picker (palette filtered to panes)
-        app.show_palette = true;
-        app.palette_query = ">".to_string(); // Filter prefix for panes
-        app.palette_selection = 0;
     } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('z') {
         // Toggle zoom on focused pane
         app.toggle_zoom();
@@ -777,4 +815,85 @@ fn cleanup_terminal() -> Result<()> {
     terminal::disable_raw_mode()?;
     execute!(std::io::stdout(), cursor::Show, LeaveAlternateScreen)?;
     Ok(())
+}
+
+/// Navigate in the grid with automatic page change when moving off edge
+fn navigate_grid(
+    app: &mut App,
+    layout: &[(usize, Rect)],
+    has_architect: bool,
+    dx: i32,
+    dy: i32,
+    workers_per_page: usize,
+) {
+    use crate::ui::layout::{get_grid_position, get_pane_at_position};
+
+    let Some(pos) = get_grid_position(layout, app.focused_pane, has_architect) else {
+        return;
+    };
+
+    let new_col = (pos.col as i32 + dx).max(0) as usize;
+    let new_row = (pos.row as i32 + dy).max(0) as usize;
+
+    // Check for page change on vertical movement
+    if dy > 0 && new_row >= pos.num_rows {
+        // Moving down past bottom - try next page
+        let total_pages = app.total_worker_pages(workers_per_page);
+        if app.worker_page + 1 < total_pages {
+            app.worker_page += 1;
+            // Focus first worker on new page (skip architect row if present)
+            let start_row = if has_architect { 1 } else { 0 };
+            if let Some(new_idx) = get_pane_at_position(layout, start_row, pos.col, has_architect) {
+                app.focused_pane = new_idx;
+            }
+        }
+        return;
+    }
+
+    if dy < 0 && pos.row == 0 {
+        // Already at top row, can't go up further
+        return;
+    }
+
+    if dy < 0 && has_architect && pos.row == 1 && app.worker_page > 0 {
+        // Moving up from first worker row - go to previous page
+        app.worker_page -= 1;
+        return;
+    }
+
+    // Check for page change on horizontal movement at edges
+    if dx > 0 && new_col >= pos.num_cols {
+        // Moving right past edge
+        if !pos.is_architect {
+            // Check if we're at the last item and there's a next page
+            let total_pages = app.total_worker_pages(workers_per_page);
+            if app.worker_page + 1 < total_pages {
+                // Check if at last position in grid
+                let last_worker_row = pos.num_rows - 1;
+                if pos.row == last_worker_row || (has_architect && pos.row == pos.num_rows - 1) {
+                    app.worker_page += 1;
+                    return;
+                }
+            }
+        }
+        return;
+    }
+
+    if dx < 0 && pos.col == 0 {
+        // Moving left past edge
+        if !pos.is_architect && app.worker_page > 0 {
+            // Check if at first worker position
+            let first_worker_row = if has_architect { 1 } else { 0 };
+            if pos.row == first_worker_row {
+                app.worker_page -= 1;
+                return;
+            }
+        }
+        return;
+    }
+
+    // Normal navigation within current page
+    if let Some(new_idx) = get_pane_at_position(layout, new_row, new_col, has_architect) {
+        app.focused_pane = new_idx;
+    }
 }

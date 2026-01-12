@@ -88,8 +88,11 @@ Press `Escape` to enter nav mode, `Enter` to return to input mode.
 
 | Key | Action |
 |-----|--------|
-| `h`/`j`/`k`/`l` or arrows | Navigate between panes |
+| `h` / `l` | Move left/right in grid |
+| `j` / `k` | Move down/up in grid |
+| Arrows | Navigate grid (auto-changes page at edges) |
 | `[` / `]` | Previous/next page of workers |
+| `p` | Open command palette |
 | `Ctrl+U` / `Ctrl+D` | Scroll up/down half page |
 | `PageUp` / `PageDown` | Scroll up/down |
 | `Home` / `End` | Scroll to top/bottom |
@@ -100,14 +103,16 @@ Press `Escape` to enter nav mode, `Enter` to return to input mode.
 | `?` | Toggle help |
 | `Tab` | Focus sidebar |
 
-### Global Keys (any mode)
+### Input Mode Keys (Ctrl+ combinations)
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+P` | Command palette |
+| `Ctrl+H/J/K/L` | Navigate grid (left/down/up/right) |
 | `Ctrl+S` | Toggle smart mode (show only active workers) |
-| `Ctrl+B` | Toggle sidebar |
-| `Escape` | Enter nav mode / close dialogs |
+| `Ctrl+O` | Toggle sidebar |
+| `Ctrl+Z` | Toggle zoom |
+| `Ctrl+D` | Detach |
+| `Escape` | Enter nav mode |
 
 ### Sidebar Keys (when focused)
 

@@ -157,3 +157,106 @@ fn layout_architect_plus_workers(
     rects.extend(layout_workers_grid(rows[1], workers));
     rects
 }
+
+/// Grid position info for navigation
+#[derive(Debug, Clone, Copy)]
+pub struct GridPosition {
+    pub row: usize,
+    pub col: usize,
+    pub num_cols: usize,
+    pub num_rows: usize,
+    pub is_architect: bool,
+}
+
+/// Get grid position for a pane in the current layout
+pub fn get_grid_position(
+    layout: &[(usize, Rect)],
+    pane_idx: usize,
+    has_architect: bool,
+) -> Option<GridPosition> {
+    let pos_in_layout = layout.iter().position(|(idx, _)| *idx == pane_idx)?;
+
+    if has_architect {
+        if pos_in_layout == 0 {
+            // Architect is at row 0, col 0
+            let num_cols = if layout.len() > 1 {
+                // Count items in first worker row
+                let worker_count = layout.len() - 1;
+                calculate_columns_for_count(worker_count)
+            } else {
+                1
+            };
+            return Some(GridPosition {
+                row: 0,
+                col: 0,
+                num_cols,
+                num_rows: if layout.len() > 1 { 2 } else { 1 },
+                is_architect: true,
+            });
+        }
+        // Worker position (offset by 1 for architect)
+        let worker_pos = pos_in_layout - 1;
+        let worker_count = layout.len() - 1;
+        let num_cols = calculate_columns_for_count(worker_count);
+        let row = (worker_pos / num_cols) + 1; // +1 for architect row
+        let col = worker_pos % num_cols;
+        let worker_rows = (worker_count + num_cols - 1) / num_cols;
+        Some(GridPosition {
+            row,
+            col,
+            num_cols,
+            num_rows: worker_rows + 1, // +1 for architect
+            is_architect: false,
+        })
+    } else {
+        // No architect, all workers
+        let num_cols = calculate_columns_for_count(layout.len());
+        let row = pos_in_layout / num_cols;
+        let col = pos_in_layout % num_cols;
+        let num_rows = (layout.len() + num_cols - 1) / num_cols;
+        Some(GridPosition {
+            row,
+            col,
+            num_cols,
+            num_rows,
+            is_architect: false,
+        })
+    }
+}
+
+/// Get pane index at grid position
+pub fn get_pane_at_position(
+    layout: &[(usize, Rect)],
+    row: usize,
+    col: usize,
+    has_architect: bool,
+) -> Option<usize> {
+    if has_architect {
+        if row == 0 {
+            // Architect row
+            return layout.first().map(|(idx, _)| *idx);
+        }
+        // Worker row
+        let worker_row = row - 1;
+        let worker_count = layout.len().saturating_sub(1);
+        let num_cols = calculate_columns_for_count(worker_count);
+        let worker_pos = worker_row * num_cols + col.min(num_cols - 1);
+        // +1 to skip architect
+        layout.get(worker_pos + 1).map(|(idx, _)| *idx)
+    } else {
+        let num_cols = calculate_columns_for_count(layout.len());
+        let pos = row * num_cols + col.min(num_cols - 1);
+        layout.get(pos).map(|(idx, _)| *idx)
+    }
+}
+
+fn calculate_columns_for_count(count: usize) -> usize {
+    // Estimate columns - in practice this should match the actual layout
+    // For simplicity, assume 2-4 columns based on count
+    match count {
+        0..=1 => 1,
+        2..=3 => 2,
+        4..=6 => 3,
+        _ => 4,
+    }
+}
