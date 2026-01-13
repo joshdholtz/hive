@@ -15,11 +15,8 @@ pub fn render_pane(
     sidebar_focused: bool,
     scroll_buffer: Option<&OutputBuffer>,
 ) {
-    let (border_color, title_color) = if focused {
-        (Color::Yellow, Color::Yellow)
-    } else {
-        (Color::DarkGray, Color::Blue)
-    };
+    let border_color = if focused { Color::Yellow } else { Color::DarkGray };
+    let title_color = if focused { Color::Yellow } else { Color::Blue };
 
     let border_style = Style::default().fg(border_color);
 
@@ -51,9 +48,7 @@ pub fn render_pane(
         title.push_str(&format!(" [scroll {}]", scroll_offset));
     }
 
-    let title_style = Style::default().fg(title_color);
     let block = Block::default()
-        .title(Line::from(title).style(title_style))
         .borders(Borders::ALL)
         .border_style(border_style);
     let inner = block.inner(area);
@@ -72,6 +67,15 @@ pub fn render_pane(
         .show_cursor(scroll_buffer.is_none());
 
     frame.render_widget(terminal, area);
+
+    if area.width > 2 {
+        let title_style = Style::default().fg(title_color);
+        let max = area.width.saturating_sub(2) as usize;
+        let label = format!(" {} ", title);
+        frame
+            .buffer_mut()
+            .set_stringn(area.x + 1, area.y, label, max, title_style);
+    }
 
     if sidebar_focused && !focused {
         frame

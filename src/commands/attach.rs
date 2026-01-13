@@ -214,9 +214,9 @@ fn run_tui(
         // Clamp page if terminal resized
         app.clamp_worker_page(workers_per_page);
 
-        // Minimum PTY size - both need reasonable width for TUI status lines
-        let min_pty_rows = 16u16;
-        let min_pty_cols = 100u16;
+        // Minimum PTY size - avoid zero dimensions but honor pane bounds
+        let min_pty_rows = 2u16;
+        let min_pty_cols = 2u16;
 
         if !app.panes.is_empty() {
             let layout = crate::ui::layout::calculate_layout(app, pane_area, workers_per_page);

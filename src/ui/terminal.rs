@@ -52,10 +52,20 @@ impl Widget for TerminalWidget<'_> {
             None => area,
         };
 
-        buf.set_style(inner, self.style);
+        clear_inner(inner, buf, self.style);
 
         let content = self.buffer.renderable_content();
         render_content(content, inner, buf, self.style, self.show_cursor);
+    }
+}
+
+fn clear_inner(area: Rect, buf: &mut Buffer, style: Style) {
+    for y in area.top()..area.bottom() {
+        for x in area.left()..area.right() {
+            let cell = &mut buf[(x, y)];
+            cell.reset();
+            cell.set_style(style);
+        }
     }
 }
 
@@ -68,15 +78,13 @@ fn render_content(
 ) {
     let base_modifiers = base_style.add_modifier;
     let display_offset = content.display_offset as i32;
-
     for indexed in content.display_iter.by_ref() {
         let point = indexed.point;
         let row = point.line.0 + display_offset;
         if row < 0 {
             continue;
         }
-        let row = row as u16;
-        if row >= area.height {
+        if row >= area.height as i32 {
             continue;
         }
 
@@ -86,31 +94,30 @@ fn render_content(
         }
 
         let cell = indexed.cell;
-        let target = &mut buf[(area.x + col, area.y + row)];
 
-        if !cell.flags.contains(Flags::WIDE_CHAR_SPACER)
-            && !cell.flags.contains(Flags::LEADING_WIDE_CHAR_SPACER)
+        if cell.flags.contains(Flags::WIDE_CHAR_SPACER)
+            || cell.flags.contains(Flags::LEADING_WIDE_CHAR_SPACER)
         {
-            if cell.flags.contains(Flags::WIDE_CHAR) && col + 1 >= area.width {
-                target.set_char(' ');
-            } else {
-                target.set_char(cell.c);
-            }
+            continue;
+        }
+        if cell.flags.contains(Flags::WIDE_CHAR) && col + 1 >= area.width {
+            let y = area.y + row as u16;
+            let x = area.x + col;
+            let target = &mut buf[(x, y)];
+            target.set_char(' ');
+            continue;
         }
 
         let mut style = Style::default().add_modifier(base_modifiers);
         apply_flags(&mut style, cell.flags);
+        style = style
+            .fg(map_color(cell.fg, content.colors))
+            .bg(map_color(cell.bg, content.colors));
 
-        target.modifier = style.add_modifier;
-
-        let fg = map_color(cell.fg, content.colors);
-        if fg != Color::Reset {
-            target.set_fg(fg);
-        }
-        let bg = map_color(cell.bg, content.colors);
-        if bg != Color::Reset {
-            target.set_bg(bg);
-        }
+        let text = cell_text(cell);
+        let remaining = area.width.saturating_sub(col) as usize;
+        let y = area.y + row as u16;
+        buf.set_stringn(area.x + col, y, text, remaining, style);
     }
 
     if show_cursor && content.display_offset == 0 {
@@ -154,6 +161,56 @@ fn apply_flags(style: &mut Style, flags: Flags) {
         style.add_modifier.insert(Modifier::HIDDEN);
     }
 }
+
+fn cell_text(cell: &alacritty_terminal::term::cell::Cell) -> String {
+    if cell.flags.contains(Flags::HIDDEN) || cell.c == '\0' || cell.c.is_control() {
+        return " ".to_string();
+    }
+
+    let mut text = String::new();
+    text.push(normalize_glyph(cell.c));
+    if let Some(zerowidth) = cell.zerowidth() {
+        for zw in zerowidth {
+            text.push(*zw);
+        }
+    }
+    text
+}
+
+fn normalize_glyph(c: char) -> char {
+    match c {
+        // Fallbacks for line drawing scanlines (often missing in terminal fonts).
+        '\u{23BA}' | '\u{23BB}' | '\u{23BC}' | '\u{23BD}' => '─',
+        // Fallbacks for heavy box-drawing characters to their light equivalents.
+        '\u{2501}' => '─',
+        '\u{2503}' => '│',
+        '\u{250F}' => '┌',
+        '\u{2513}' => '┐',
+        '\u{2517}' => '└',
+        '\u{251B}' => '┘',
+        '\u{2523}' => '├',
+        '\u{252B}' => '┤',
+        '\u{2533}' => '┬',
+        '\u{253B}' => '┴',
+        '\u{254B}' => '┼',
+        // Fallbacks for double box-drawing characters to light equivalents.
+        '\u{2550}' => '─',
+        '\u{2551}' => '│',
+        '\u{2552}' | '\u{2553}' | '\u{2554}' => '┌',
+        '\u{2555}' | '\u{2556}' | '\u{2557}' => '┐',
+        '\u{2558}' | '\u{2559}' | '\u{255A}' => '└',
+        '\u{255B}' | '\u{255C}' | '\u{255D}' => '┘',
+        '\u{255E}' | '\u{255F}' | '\u{2560}' => '├',
+        '\u{2561}' | '\u{2562}' | '\u{2563}' => '┤',
+        '\u{2564}' | '\u{2565}' | '\u{2566}' => '┬',
+        '\u{2567}' | '\u{2568}' | '\u{2569}' => '┴',
+        '\u{256A}' | '\u{256B}' | '\u{256C}' => '┼',
+        // Replace control pictures with space to avoid font-specific placeholders.
+        '\u{2400}'..='\u{2424}' => ' ',
+        _ => c,
+    }
+}
+
 
 fn map_color(color: AnsiColor, palette: &Colors) -> Color {
     match color {

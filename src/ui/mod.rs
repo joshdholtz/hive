@@ -14,6 +14,7 @@ use ratatui::prelude::*;
 use crate::app::state::App;
 
 pub fn render(frame: &mut Frame, app: &App) {
+    ratatui::widgets::Clear.render(frame.area(), frame.buffer_mut());
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([

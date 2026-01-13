@@ -28,6 +28,7 @@ pathdiff = "0.2"
 indexmap = "2"
 serde_json = "1"
 alacritty_terminal = "0.25.1"
+unicode-width = "0.2"
 
 [dev-dependencies]
 insta = "1"
