@@ -460,7 +460,7 @@ fn handle_key_event(
                                 conn.send(ClientMessage::Detach)?;
                                 return Ok(true);
                             }
-                            crate::app::palette::PaletteAction::Kill => {
+                            crate::app::palette::PaletteAction::Stop => {
                                 conn.send(ClientMessage::Shutdown)?;
                                 return Ok(true);
                             }
@@ -528,7 +528,7 @@ fn handle_key_event(
                                 conn.send(ClientMessage::Detach)?;
                                 return Ok(true);
                             }
-                            crate::app::palette::PaletteAction::Kill => {
+                            crate::app::palette::PaletteAction::Stop => {
                                 conn.send(ClientMessage::Shutdown)?;
                                 return Ok(true);
                             }

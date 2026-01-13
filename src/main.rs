@@ -24,7 +24,7 @@ enum Commands {
         daemon: bool,
     },
     /// Stop the hive server
-    Stop,
+    Down,
     /// Show session status
     Status,
     /// Send nudge message to workers
@@ -67,7 +67,7 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Up { daemon } => commands::up::run(&cwd, daemon),
-        Commands::Stop => commands::stop::run(&cwd),
+        Commands::Down => commands::down::run(&cwd),
         Commands::Status => commands::status::run(&cwd),
         Commands::Nudge { worker } => commands::nudge::run(&cwd, worker.as_deref()),
         Commands::Role { worker } => commands::role::run(&cwd, worker.as_deref()),

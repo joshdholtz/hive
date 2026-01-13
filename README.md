@@ -57,7 +57,7 @@ hive attach
 |---------|-------------|
 | `hive up` | Start the hive (runs setup wizard if no config exists) |
 | `hive attach` | Attach to a running hive's TUI |
-| `hive stop` | Stop the hive server |
+| `hive down` | Stop the hive server |
 | `hive status` | Show worker status and task counts |
 | `hive nudge [worker]` | Nudge workers to check for tasks |
 | `hive role [worker]` | Regenerate worker role files |

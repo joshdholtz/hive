@@ -22,7 +22,7 @@ pub enum PaletteAction {
     NudgeFocused,
     ToggleHelp,
     Detach,
-    Kill,
+    Stop,
 }
 
 pub fn build_items(app: &App) -> Vec<PaletteItem> {
@@ -76,8 +76,8 @@ pub fn build_items(app: &App) -> Vec<PaletteItem> {
             action: PaletteAction::Detach,
         },
         PaletteItem {
-            label: "Kill server and exit".to_string(),
-            action: PaletteAction::Kill,
+            label: "Stop server and exit".to_string(),
+            action: PaletteAction::Stop,
         },
     ];
 

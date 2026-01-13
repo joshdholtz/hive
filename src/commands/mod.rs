@@ -10,5 +10,5 @@ pub mod role;
 pub mod serve;
 pub mod setup;
 pub mod status;
-pub mod stop;
+pub mod down;
 pub mod up;
