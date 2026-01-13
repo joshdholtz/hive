@@ -14,9 +14,11 @@ Hive is a native terminal multiplexer for orchestrating multiple Claude or Codex
 ├────────────────────┬────────────────────┬───────────────────┤
 │      features      │       fixes        │       tests       │
 ├────────────────────┼────────────────────┼───────────────────┤
-│        api         │       auth         │      android      │
+│        api         │       auth         │      database     │
+├────────────────────┼────────────────────┼───────────────────┤
+│      android       │        ios         │    javascript     │
 └────────────────────┴────────────────────┴───────────────────┘
-         3/6 visible | [1/2] | backend: claude | mode: NAV
+         6/9 visible | [1/2] | backend: claude | mode: INPUT
 ```
 
 ---
