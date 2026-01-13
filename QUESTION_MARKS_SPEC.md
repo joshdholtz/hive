@@ -14,7 +14,7 @@ Sometimes panes display lots of `?????????????` characters that overlay/bleed in
 
 ### 1. Unicode/Wide Character Handling
 
-The terminal emulator (vt100) or renderer may not properly handle:
+The terminal emulator or renderer may not properly handle:
 - Emoji characters (which are 2 cells wide)
 - CJK characters (also 2 cells wide)
 - Box drawing characters
@@ -41,12 +41,12 @@ If the PTY size doesn't match the rendered area, content could wrap incorrectly 
 ### Rendering Stack
 
 ```
-PTY (raw bytes) --> OutputBuffer (vt100 parser) --> TerminalWidget --> ratatui Frame
+PTY (raw bytes) --> OutputBuffer (alacritty_terminal) --> TerminalWidget --> ratatui Frame
 ```
 
 ### Key Files
 
-- `src/pty/output.rs` - `OutputBuffer` wraps vt100 parser
+- `src/pty/output.rs` - `OutputBuffer` wraps `alacritty_terminal::Term` + VTE parser
 - `src/ui/terminal.rs` - Custom `TerminalWidget` for rendering (NEW - replaces tui-term)
 - `src/ui/pane.rs` - Pane rendering, creates TerminalWidget
 - `src/ui/mod.rs` - Main render function, layout calculation
@@ -57,24 +57,24 @@ PTY (raw bytes) --> OutputBuffer (vt100 parser) --> TerminalWidget --> ratatui F
 ```rust
 // src/pty/output.rs
 pub struct OutputBuffer {
-    parser: vt100::Parser,
-    scroll_offset: usize,
+    term: alacritty_terminal::Term<...>,
+    parser: alacritty_terminal::vte::ansi::Processor,
     scrollback_len: usize,
 }
 
 impl OutputBuffer {
     pub fn push_bytes(&mut self, data: &[u8]) {
-        // Filters ESC[3J (scrollback clear) but otherwise passes to vt100
+        // Filters ESC[3J (scrollback clear) but otherwise passes to VTE
         let filtered = filter_scrollback_clear(data);
-        self.parser.process(&filtered);
+        self.parser.advance(&mut self.term, &filtered);
     }
 
-    pub fn screen(&self) -> &vt100::Screen {
-        self.parser.screen()
+    pub fn renderable_content(&self) -> RenderableContent<'_> {
+        self.term.renderable_content()
     }
 
     pub fn size(&self) -> (u16, u16) {
-        self.parser.screen().size()
+        (self.term.screen_lines() as u16, self.term.columns() as u16)
     }
 }
 ```
@@ -101,11 +101,11 @@ Look at `src/ui/terminal.rs`:
 - How does it iterate over screen cells?
 - Does it handle wide characters (emoji, CJK)?
 - Does it properly clip to the render area?
-- Does it handle the vt100 `Cell` contents correctly?
+- Does it handle the alacritty `Cell` flags correctly?
 
 ### 2. Check character width handling
 
-vt100's `Screen` has cells that can contain:
+Alacritty's grid cells can contain:
 - Single-width characters
 - Wide characters (2 cells) - the first cell has the char, second is a "wide continuation"
 - Empty cells
@@ -132,13 +132,7 @@ impl Widget for TerminalWidget<'_> {
 
 ### 4. Check UTF-8 handling
 
-When extracting characters from vt100 screen:
-```rust
-let cell = screen.cell(row, col);
-let contents = cell.contents();  // This is a String
-```
-
-If `contents` contains invalid UTF-8 or characters the terminal font doesn't support, rendering issues occur.
+When extracting characters from the alacritty grid, `Cell::c` is a `char`. Invalid UTF-8 should not appear, but wide-character rendering can still corrupt adjacent cells if we render at the right edge of a pane.
 
 ## Debugging Steps
 
@@ -177,30 +171,27 @@ fn render(self, area: Rect, buf: &mut Buffer) {
 
 ### Fix 2: Wide character handling
 ```rust
-let cell = screen.cell(row, col);
-if cell.is_wide_continuation() {
+let cell = grid_cell;
+if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
     continue;  // Skip the continuation cell
 }
 
-let ch = cell.contents();
-let width = unicode_width::UnicodeWidthStr::width(ch.as_str());
-
-if width == 0 {
-    // Zero-width character, might need special handling
-}
-if width > 1 {
-    // Wide character, ensure we don't double-render
+let is_wide = cell.flags.contains(Flags::WIDE_CHAR);
+if is_wide && col + 1 >= area.width {
+    // Don't render a wide glyph at the last column; it would bleed into the border/sidebar.
+    target.set_char(' ');
+} else {
+    target.set_char(cell.c);
 }
 ```
 
-### Fix 3: Replace unrenderable characters
+### Fix 3: Skip hidden/zero-width output
 ```rust
-let ch = cell.contents();
-let display_char = if ch.chars().all(|c| c.is_ascii() || is_safe_unicode(c)) {
-    ch
+if cell.flags.contains(Flags::HIDDEN) {
+    target.set_char(' ');
 } else {
-    " ".to_string()  // Or "?" but contained properly
-};
+    target.set_char(cell.c);
+}
 ```
 
 ## Testing

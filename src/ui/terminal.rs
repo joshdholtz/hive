@@ -91,7 +91,11 @@ fn render_content(
         if !cell.flags.contains(Flags::WIDE_CHAR_SPACER)
             && !cell.flags.contains(Flags::LEADING_WIDE_CHAR_SPACER)
         {
-            target.set_char(cell.c);
+            if cell.flags.contains(Flags::WIDE_CHAR) && col + 1 >= area.width {
+                target.set_char(' ');
+            } else {
+                target.set_char(cell.c);
+            }
         }
 
         let mut style = Style::default().add_modifier(base_modifiers);
