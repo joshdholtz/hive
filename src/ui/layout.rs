@@ -4,9 +4,9 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use crate::app::state::App;
 use crate::app::types::PaneType;
 
-/// Minimum dimensions for a worker pane to be usable
-const MIN_PANE_HEIGHT: u16 = 16;
-const MIN_PANE_WIDTH: u16 = 100;
+/// Default minimum dimensions for a worker pane
+pub const DEFAULT_MIN_PANE_HEIGHT: u16 = 16;
+pub const DEFAULT_MIN_PANE_WIDTH: u16 = 100;
 
 /// Get worker pane indices in visual order (matching sidebar display)
 /// Groups are shown first (in order of first appearance), then standalone panes
@@ -50,34 +50,44 @@ pub fn get_workers_in_visual_order(app: &App) -> Vec<usize> {
 
 /// Calculate how many workers fit per page based on available area
 /// Layout is dynamic: columns based on width, rows based on height
-pub fn calculate_workers_per_page(area: Rect, has_architect: bool) -> usize {
+pub fn calculate_workers_per_page(
+    area: Rect,
+    has_architect: bool,
+    min_width: u16,
+    min_height: u16,
+) -> usize {
     // Account for architect taking one row if visible
     let worker_area_height = if has_architect {
-        if area.height < MIN_PANE_HEIGHT * 2 {
+        if area.height < min_height * 2 {
             return 1;
         }
         // Architect gets 1 row, workers get the rest
-        area.height.saturating_sub(MIN_PANE_HEIGHT)
+        area.height.saturating_sub(min_height)
     } else {
         area.height
     };
 
     // Calculate columns based on width
-    let cols = (area.width / MIN_PANE_WIDTH).max(1) as usize;
+    let cols = (area.width / min_width).max(1) as usize;
     // Calculate rows based on height
-    let rows = (worker_area_height / MIN_PANE_HEIGHT).max(1) as usize;
+    let rows = (worker_area_height / min_height).max(1) as usize;
 
     cols * rows
 }
 
 /// Calculate number of columns for a given width and worker count
-fn calculate_columns(width: u16, num_workers: usize) -> usize {
-    let max_cols = (width / MIN_PANE_WIDTH).max(1) as usize;
+fn calculate_columns(width: u16, num_workers: usize, min_width: u16) -> usize {
+    let max_cols = (width / min_width).max(1) as usize;
     // Use as many columns as we have workers, up to max
     num_workers.min(max_cols)
 }
 
-pub fn calculate_layout(app: &App, area: Rect, workers_per_page: usize) -> Vec<(usize, Rect)> {
+pub fn calculate_layout(
+    app: &App,
+    area: Rect,
+    workers_per_page: usize,
+    min_width: u16,
+) -> Vec<(usize, Rect)> {
     if app.zoomed {
         return vec![(app.focused_pane, area)];
     }
@@ -105,19 +115,19 @@ pub fn calculate_layout(app: &App, area: Rect, workers_per_page: usize) -> Vec<(
     match (architect_idx, page_workers.len()) {
         (None, 0) => Vec::new(),
         (Some(arch), 0) => vec![(arch, area)],
-        (None, _) => layout_workers_grid(area, &page_workers),
+        (None, _) => layout_workers_grid(area, &page_workers, min_width),
         (Some(arch), _) => {
             if app.architect_left {
-                layout_architect_left_plus_workers(area, arch, &page_workers)
+                layout_architect_left_plus_workers(area, arch, &page_workers, min_width)
             } else {
-                layout_architect_top_plus_workers(area, arch, &page_workers)
+                layout_architect_top_plus_workers(area, arch, &page_workers, min_width)
             }
         }
     }
 }
 
 /// Layout workers in a dynamic grid (columns based on width)
-fn layout_workers_grid(area: Rect, workers: &[usize]) -> Vec<(usize, Rect)> {
+fn layout_workers_grid(area: Rect, workers: &[usize], min_width: u16) -> Vec<(usize, Rect)> {
     if workers.is_empty() {
         return Vec::new();
     }
@@ -126,7 +136,7 @@ fn layout_workers_grid(area: Rect, workers: &[usize]) -> Vec<(usize, Rect)> {
     }
 
     // Calculate number of columns based on width and worker count
-    let num_cols = calculate_columns(area.width, workers.len());
+    let num_cols = calculate_columns(area.width, workers.len(), min_width);
     let num_rows = (workers.len() + num_cols - 1) / num_cols;
 
     let row_constraints = vec![Constraint::Ratio(1, num_rows as u32); num_rows];
@@ -167,13 +177,14 @@ fn layout_architect_top_plus_workers(
     area: Rect,
     architect_idx: usize,
     workers: &[usize],
+    min_width: u16,
 ) -> Vec<(usize, Rect)> {
     if workers.is_empty() {
         return vec![(architect_idx, area)];
     }
 
     // Calculate worker grid dimensions
-    let num_cols = calculate_columns(area.width, workers.len());
+    let num_cols = calculate_columns(area.width, workers.len(), min_width);
     let worker_rows = (workers.len() + num_cols - 1) / num_cols;
 
     // Architect gets 1 row, workers get the rest
@@ -186,7 +197,7 @@ fn layout_architect_top_plus_workers(
         .split(area);
 
     let mut rects = vec![(architect_idx, rows[0])];
-    rects.extend(layout_workers_grid(rows[1], workers));
+    rects.extend(layout_workers_grid(rows[1], workers, min_width));
     rects
 }
 
@@ -195,6 +206,7 @@ fn layout_architect_left_plus_workers(
     area: Rect,
     architect_idx: usize,
     workers: &[usize],
+    min_width: u16,
 ) -> Vec<(usize, Rect)> {
     if workers.is_empty() {
         return vec![(architect_idx, area)];
@@ -202,8 +214,8 @@ fn layout_architect_left_plus_workers(
 
     // Calculate worker grid dimensions for the right side
     // Workers get more horizontal space, so recalculate columns for reduced width
-    let worker_area_width = area.width.saturating_sub(MIN_PANE_WIDTH);
-    let num_cols = (worker_area_width / MIN_PANE_WIDTH).max(1) as usize;
+    let worker_area_width = area.width.saturating_sub(min_width);
+    let num_cols = (worker_area_width / min_width).max(1) as usize;
     let num_cols = workers.len().min(num_cols);
 
     // Architect gets 1 column, workers get the rest
@@ -216,7 +228,7 @@ fn layout_architect_left_plus_workers(
         .split(area);
 
     let mut rects = vec![(architect_idx, cols[0])];
-    rects.extend(layout_workers_grid(cols[1], workers));
+    rects.extend(layout_workers_grid(cols[1], workers, min_width));
     rects
 }
 

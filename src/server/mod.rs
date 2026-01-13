@@ -106,6 +106,8 @@ fn run_workspace(config_path: &Path) -> Result<()> {
         tasks_file: Some(tasks_path),
         log_path,
         architect_left: ui_state.architect_left,
+        min_pane_width: config.layout.min_pane_width,
+        min_pane_height: config.layout.min_pane_height,
     };
 
     write_workspace_pid(&workspace_dir)?;
@@ -188,6 +190,8 @@ fn run_legacy(config_path: &Path) -> Result<()> {
         tasks_file,
         log_path,
         architect_left: ui_state.architect_left,
+        min_pane_width: crate::ui::layout::DEFAULT_MIN_PANE_WIDTH,
+        min_pane_height: crate::ui::layout::DEFAULT_MIN_PANE_HEIGHT,
     };
 
     write_pid(&state.project_dir)?;
@@ -209,6 +213,8 @@ struct ServerState {
     tasks_file: Option<PathBuf>,
     log_path: PathBuf,
     architect_left: bool,
+    min_pane_width: u16,
+    min_pane_height: u16,
 }
 
 enum ServerEvent {
@@ -950,6 +956,8 @@ fn build_state(state: &ServerState) -> AppState {
             .collect(),
         task_counts: state.task_counts.clone(),
         architect_left: state.architect_left,
+        min_pane_width: state.min_pane_width,
+        min_pane_height: state.min_pane_height,
     }
 }
 

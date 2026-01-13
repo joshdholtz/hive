@@ -179,7 +179,13 @@ architect:
 
 workers:
   backend: claude
+
+layout:
+  min_pane_width: 100   # Minimum pane width (default: 100)
+  min_pane_height: 16   # Minimum pane height (default: 16)
 ```
+
+Smaller `min_pane_width`/`min_pane_height` values = more panes fit on screen. Larger values = fewer but bigger panes.
 
 Run `hive up` to create this interactively via the setup wizard.
 

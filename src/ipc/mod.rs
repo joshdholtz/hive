@@ -34,6 +34,18 @@ pub struct AppState {
     pub task_counts: HashMap<String, TaskCounts>,
     #[serde(default)]
     pub architect_left: bool,
+    #[serde(default = "default_min_pane_width")]
+    pub min_pane_width: u16,
+    #[serde(default = "default_min_pane_height")]
+    pub min_pane_height: u16,
+}
+
+fn default_min_pane_width() -> u16 {
+    100
+}
+
+fn default_min_pane_height() -> u16 {
+    16
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -218,7 +218,7 @@ fn run_tui(
             .iter()
             .any(|p| p.visible && matches!(p.pane_type, crate::app::types::PaneType::Architect));
         let workers_per_page =
-            crate::ui::layout::calculate_workers_per_page(pane_area, has_architect);
+            crate::ui::layout::calculate_workers_per_page(pane_area, has_architect, app.min_pane_width, app.min_pane_height);
 
         // Clamp page if terminal resized
         app.clamp_worker_page(workers_per_page);
@@ -228,7 +228,7 @@ fn run_tui(
         let min_pty_cols = 2u16;
 
         if !app.panes.is_empty() {
-            let layout = crate::ui::layout::calculate_layout(app, pane_area, workers_per_page);
+            let layout = crate::ui::layout::calculate_layout(app, pane_area, workers_per_page, app.min_pane_width);
             let sizes: Vec<PaneSize> = layout
                 .iter()
                 .map(|(idx, rect)| PaneSize {
@@ -262,7 +262,7 @@ fn run_tui(
                     // This prevents replay from being processed at wrong size (24x80 default)
                     if !app.panes.is_empty() {
                         let layout =
-                            crate::ui::layout::calculate_layout(app, pane_area, workers_per_page);
+                            crate::ui::layout::calculate_layout(app, pane_area, workers_per_page, app.min_pane_width);
                         for (idx, rect) in &layout {
                             let rows = rect.height.saturating_sub(2).max(min_pty_rows);
                             let cols = rect.width.saturating_sub(2).max(min_pty_cols);
@@ -645,7 +645,7 @@ fn handle_key_event(
     }
 
     // Calculate layout for grid navigation
-    let layout = crate::ui::layout::calculate_layout(app, pane_area, workers_per_page);
+    let layout = crate::ui::layout::calculate_layout(app, pane_area, workers_per_page, app.min_pane_width);
     let has_architect = app
         .panes
         .iter()

@@ -604,6 +604,7 @@ fn create_workspace(state: &SetupState) -> Result<PathBuf> {
             setup: Vec::new(),
             symlink: state.symlink_files.clone(),
         },
+        layout: crate::workspace::config::LayoutConfig::default(),
     };
 
     // Add selected projects with their lanes

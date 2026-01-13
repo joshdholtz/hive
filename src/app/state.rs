@@ -76,6 +76,10 @@ pub struct App {
     pub scroll_mode: bool,
     /// Temporary buffer for scroll mode (parsed from raw_history)
     pub scroll_buffer: Option<crate::pty::output::OutputBuffer>,
+    /// Minimum pane width for layout calculations
+    pub min_pane_width: u16,
+    /// Minimum pane height for layout calculations
+    pub min_pane_height: u16,
 }
 
 impl App {
@@ -117,6 +121,8 @@ impl App {
             task_queue_expanded: HashMap::new(),
             scroll_mode: false,
             scroll_buffer: None,
+            min_pane_width: crate::ui::layout::DEFAULT_MIN_PANE_WIDTH,
+            min_pane_height: crate::ui::layout::DEFAULT_MIN_PANE_HEIGHT,
         }
     }
 
@@ -234,6 +240,8 @@ impl App {
         self.layout_mode = state.layout_mode;
         self.task_counts = state.task_counts;
         self.architect_left = state.architect_left;
+        self.min_pane_width = state.min_pane_width;
+        self.min_pane_height = state.min_pane_height;
 
         self.windows = state.windows.into_iter().map(window_info_to_app).collect();
 

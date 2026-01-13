@@ -63,8 +63,13 @@ fn render_panes(frame: &mut Frame, area: Rect, app: &App) -> usize {
         .panes
         .iter()
         .any(|p| p.visible && matches!(p.pane_type, crate::app::types::PaneType::Architect));
-    let workers_per_page = layout::calculate_workers_per_page(area, has_architect);
-    let layout = layout::calculate_layout(app, area, workers_per_page);
+    let workers_per_page = layout::calculate_workers_per_page(
+        area,
+        has_architect,
+        app.min_pane_width,
+        app.min_pane_height,
+    );
+    let layout = layout::calculate_layout(app, area, workers_per_page, app.min_pane_width);
     for (idx, rect) in layout {
         let focused = idx == app.focused_pane && !app.sidebar.focused;
         // Pass scroll_buffer for focused pane when in scroll mode

@@ -5,6 +5,34 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{ArchitectConfig, Backend, WorkersConfig};
 
+/// Layout configuration for pane sizing
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LayoutConfig {
+    /// Minimum pane width in columns (default: 100)
+    #[serde(default = "default_min_pane_width")]
+    pub min_pane_width: u16,
+    /// Minimum pane height in rows (default: 16)
+    #[serde(default = "default_min_pane_height")]
+    pub min_pane_height: u16,
+}
+
+fn default_min_pane_width() -> u16 {
+    100
+}
+
+fn default_min_pane_height() -> u16 {
+    16
+}
+
+impl Default for LayoutConfig {
+    fn default() -> Self {
+        Self {
+            min_pane_width: default_min_pane_width(),
+            min_pane_height: default_min_pane_height(),
+        }
+    }
+}
+
 /// Configuration for a workspace stored in ~/.hive/workspaces/{name}/workspace.yaml
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceConfig {
@@ -15,6 +43,9 @@ pub struct WorkspaceConfig {
     pub projects: Vec<WorkspaceProject>,
     pub architect: ArchitectConfig,
     pub workers: WorkersConfig,
+    /// Layout configuration for pane sizing
+    #[serde(default)]
+    pub layout: LayoutConfig,
 }
 
 /// A project within a workspace
@@ -86,6 +117,7 @@ impl Default for WorkspaceConfig {
                 setup: Vec::new(),
                 symlink: Vec::new(),
             },
+            layout: LayoutConfig::default(),
         }
     }
 }
