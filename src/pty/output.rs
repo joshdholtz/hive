@@ -1,22 +1,54 @@
-use vt100::Parser;
+use alacritty_terminal::event::VoidListener;
+use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::term::{Config, RenderableContent, Term, TermMode};
+use alacritty_terminal::vte::ansi::Processor;
 
 pub struct OutputBuffer {
-    parser: Parser,
-    scroll_offset: usize,
+    term: Term<VoidListener>,
+    parser: Processor,
     scrollback_len: usize,
+}
+
+struct TermDimensions {
+    rows: usize,
+    cols: usize,
+}
+
+impl Dimensions for TermDimensions {
+    fn total_lines(&self) -> usize {
+        self.rows
+    }
+
+    fn screen_lines(&self) -> usize {
+        self.rows
+    }
+
+    fn columns(&self) -> usize {
+        self.cols
+    }
 }
 
 impl OutputBuffer {
     pub fn new(rows: u16, cols: u16, scrollback: usize) -> Self {
+        let mut config = Config::default();
+        config.scrolling_history = scrollback;
+        let dims = TermDimensions {
+            rows: rows as usize,
+            cols: cols as usize,
+        };
         Self {
-            parser: Parser::new(rows, cols, scrollback),
-            scroll_offset: 0,
+            term: Term::new(config, &dims, VoidListener),
+            parser: Processor::new(),
             scrollback_len: scrollback,
         }
     }
 
     pub fn resize(&mut self, rows: u16, cols: u16) {
-        self.parser.set_size(rows, cols);
+        let dims = TermDimensions {
+            rows: rows as usize,
+            cols: cols as usize,
+        };
+        self.term.resize(dims);
         // Don't reset scroll_offset or scrollback - preserve history on resize
         // This prevents content from disappearing when zooming/resizing panes
     }
@@ -25,52 +57,50 @@ impl OutputBuffer {
         // Filter out escape sequences that clear scrollback (ESC[3J)
         // Claude Code sends these which would wipe our history
         let filtered = filter_scrollback_clear(data);
-        self.parser.process(&filtered);
-        if self.scroll_offset > 0 {
-            self.parser.set_scrollback(self.scroll_offset);
-            self.scroll_offset = self.parser.screen().scrollback();
-        }
+        self.parser.advance(&mut self.term, &filtered);
     }
 
-    pub fn screen(&self) -> &vt100::Screen {
-        self.parser.screen()
+    pub fn renderable_content(&self) -> RenderableContent<'_> {
+        self.term.renderable_content()
+    }
+
+    pub fn size(&self) -> (u16, u16) {
+        (
+            self.term.screen_lines() as u16,
+            self.term.columns() as u16,
+        )
     }
 
     pub fn scroll_offset(&self) -> usize {
-        self.scroll_offset
+        self.term.grid().display_offset()
     }
 
     pub fn scroll_up(&mut self, amount: usize) {
-        let desired = (self.scroll_offset + amount).min(self.scrollback_len);
-        self.parser.set_scrollback(desired);
-        self.scroll_offset = self.parser.screen().scrollback();
+        let delta = amount.min(self.scrollback_len) as i32;
+        self.term.scroll_display(Scroll::Delta(delta));
     }
 
     pub fn scroll_down(&mut self, amount: usize) {
-        let desired = self.scroll_offset.saturating_sub(amount);
-        self.parser.set_scrollback(desired);
-        self.scroll_offset = self.parser.screen().scrollback();
+        let delta = -(amount.min(self.scrollback_len) as i32);
+        self.term.scroll_display(Scroll::Delta(delta));
     }
 
     pub fn reset_scroll(&mut self) {
-        self.parser.set_scrollback(0);
-        self.scroll_offset = self.parser.screen().scrollback();
+        self.term.scroll_display(Scroll::Bottom);
     }
 
     pub fn scroll_to_top(&mut self) {
-        self.parser.set_scrollback(self.scrollback_len);
-        self.scroll_offset = self.parser.screen().scrollback();
+        self.term.scroll_display(Scroll::Top);
     }
 
     pub fn scroll_to_bottom(&mut self) {
-        self.parser.set_scrollback(0);
-        self.scroll_offset = self.parser.screen().scrollback();
+        self.term.scroll_display(Scroll::Bottom);
     }
 
     /// Check if the terminal is using the alternate screen buffer
     /// Alternate screen has no scrollback (used by TUI apps like vim, codex)
     pub fn is_alternate_screen(&self) -> bool {
-        self.parser.screen().alternate_screen()
+        self.term.mode().contains(TermMode::ALT_SCREEN)
     }
 }
 

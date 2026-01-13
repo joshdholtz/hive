@@ -1,11 +1,11 @@
 use ratatui::prelude::*;
 use ratatui::style::Modifier;
 use ratatui::widgets::{Block, Borders};
-use tui_term::widget::{Cursor, PseudoTerminal};
 
 use crate::app::state::ClientPane;
 use crate::app::types::PaneType;
 use crate::pty::output::OutputBuffer;
+use crate::ui::terminal::TerminalWidget;
 
 pub fn render_pane(
     frame: &mut Frame,
@@ -65,17 +65,11 @@ pub fn render_pane(
     };
 
     // Use scroll_buffer if provided (for scroll mode)
-    let terminal = if let Some(scroll_buf) = scroll_buffer {
-        let cursor = Cursor::default().visibility(false);
-        PseudoTerminal::new(scroll_buf.screen())
-            .block(block)
-            .style(terminal_style)
-            .cursor(cursor)
-    } else {
-        PseudoTerminal::new(pane.output_buffer.screen())
-            .block(block)
-            .style(terminal_style)
-    };
+    let buffer = scroll_buffer.unwrap_or(&pane.output_buffer);
+    let terminal = TerminalWidget::new(buffer)
+        .block(block)
+        .style(terminal_style)
+        .show_cursor(scroll_buffer.is_none());
 
     frame.render_widget(terminal, area);
 

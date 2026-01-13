@@ -665,7 +665,7 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent, workers
         if let Some(pane) = app.panes.get(app.focused_pane) {
             let history: Vec<u8> = pane.raw_history.iter().copied().collect();
             let filtered = filter_alternate_screen(&history);
-            let (rows, cols) = pane.output_buffer.screen().size();
+            let (rows, cols) = pane.output_buffer.size();
             let mut scroll_buf = OutputBuffer::new(rows, cols, 10000);
             scroll_buf.push_bytes(&filtered);
             app.scroll_buffer = Some(scroll_buf);
