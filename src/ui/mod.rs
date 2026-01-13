@@ -5,6 +5,7 @@ pub mod pane;
 pub mod projects;
 pub mod sidebar;
 pub mod status_bar;
+pub mod task_queue;
 pub mod title_bar;
 
 use ratatui::prelude::*;
@@ -36,6 +37,10 @@ pub fn render(frame: &mut Frame, app: &App) {
     if app.show_palette {
         palette::render_palette(frame, app);
     }
+
+    if app.show_task_queue {
+        task_queue::render_task_queue(frame, app);
+    }
 }
 
 fn render_body(frame: &mut Frame, area: Rect, app: &App) -> usize {
@@ -59,12 +64,19 @@ fn render_panes(frame: &mut Frame, area: Rect, app: &App) -> usize {
     let layout = layout::calculate_layout(app, area, workers_per_page);
     for (idx, rect) in layout {
         let focused = idx == app.focused_pane && !app.sidebar.focused;
+        // Pass scroll_buffer for focused pane when in scroll mode
+        let scroll_buffer = if focused && app.scroll_mode {
+            app.scroll_buffer.as_ref()
+        } else {
+            None
+        };
         pane::render_pane(
             frame,
             rect,
             &app.panes[idx],
             focused,
             app.sidebar.focused,
+            scroll_buffer,
         );
     }
     workers_per_page

@@ -17,6 +17,7 @@ pub enum PaletteAction {
     ToggleSidebar,
     FocusSidebar,
     ProjectManager,
+    ToggleTaskQueue,
     NudgeAll,
     NudgeFocused,
     ToggleHelp,
@@ -45,6 +46,10 @@ pub fn build_items(app: &App) -> Vec<PaletteItem> {
         PaletteItem {
             label: "Project manager".to_string(),
             action: PaletteAction::ProjectManager,
+        },
+        PaletteItem {
+            label: "Task queue".to_string(),
+            action: PaletteAction::ToggleTaskQueue,
         },
         PaletteItem {
             label: "Toggle zoom".to_string(),

@@ -59,6 +59,10 @@ pub struct Task {
     pub summary: Option<String>,
     pub files_changed: Option<Vec<String>>,
     pub question: Option<String>,
+    /// PR URL for completed tasks
+    pub pr_url: Option<String>,
+    /// Branch name for the task
+    pub branch: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]

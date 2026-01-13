@@ -19,6 +19,7 @@ use crate::app::state::{App, AppWindow, ClientPane};
 use crate::config;
 use crate::ipc::{decode_server_message, ClientMessage, PaneSize, ServerMessage};
 use crate::projects;
+use crate::pty::output::{filter_alternate_screen, OutputBuffer};
 use crate::ui;
 
 pub fn run(start_dir: &Path) -> Result<()> {
@@ -262,6 +263,13 @@ fn run_tui(
                     for pane in &mut app.panes {
                         if let Some(data) = pending_output.remove(&pane.id) {
                             pane.output_buffer.push_bytes(&data);
+                            // Also push to raw history for tmux-style scrollback
+                            for byte in &data {
+                                pane.raw_history.push_back(*byte);
+                            }
+                            while pane.raw_history.len() > pane.raw_history_max {
+                                pane.raw_history.pop_front();
+                            }
                         }
                     }
                 }
@@ -269,6 +277,13 @@ fn run_tui(
                     log_line(log_path, &format!("apply-output {}", pane_id));
                     if let Some(pane) = app.panes.iter_mut().find(|p| p.id == pane_id) {
                         pane.output_buffer.push_bytes(&data);
+                        // Also push to raw history for tmux-style scrollback
+                        for byte in &data {
+                            pane.raw_history.push_back(*byte);
+                        }
+                        while pane.raw_history.len() > pane.raw_history_max {
+                            pane.raw_history.pop_front();
+                        }
                     } else {
                         pending_output.entry(pane_id).or_default().extend_from_slice(&data);
                     }
@@ -335,6 +350,14 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent, workers
         return handle_projects_key(app, key);
     }
 
+    if app.show_task_queue {
+        return handle_task_queue_key(app, key);
+    }
+
+    if app.scroll_mode {
+        return handle_scroll_mode_key(app, key);
+    }
+
     let visible = layout_visible_panes(app);
 
     if app.show_palette {
@@ -388,6 +411,10 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent, workers
                             }
                             crate::app::palette::PaletteAction::ProjectManager => {
                                 open_project_manager(app)?;
+                            }
+                            crate::app::palette::PaletteAction::ToggleTaskQueue => {
+                                app.show_task_queue = !app.show_task_queue;
+                                app.task_queue_selection = 0;
                             }
                             crate::app::palette::PaletteAction::NudgeAll => {
                                 conn.send(ClientMessage::Nudge { worker: None })?;
@@ -444,6 +471,10 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent, workers
                             }
                             crate::app::palette::PaletteAction::ProjectManager => {
                                 open_project_manager(app)?;
+                            }
+                            crate::app::palette::PaletteAction::ToggleTaskQueue => {
+                                app.show_task_queue = !app.show_task_queue;
+                                app.task_queue_selection = 0;
                             }
                             crate::app::palette::PaletteAction::NudgeAll => {
                                 conn.send(ClientMessage::Nudge { worker: None })?;
@@ -617,12 +648,31 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent, workers
         // Open command palette
         app.show_palette = true;
         app.palette_query.clear();
-    } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('[') {
-        // Previous page of workers
-        app.prev_worker_page();
-    } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char(']') {
-        // Next page of workers
-        app.next_worker_page(workers_per_page);
+    } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('t') {
+        // Toggle task queue view
+        app.show_task_queue = !app.show_task_queue;
+        app.task_queue_selection = 0;
+    } else if key.code == KeyCode::Esc || (key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('[')) {
+        // Enter scroll mode (like tmux copy mode) - ESC or Ctrl+[
+        // Note: Ctrl+[ sends ESC in terminals, so we check for both
+        if app.scroll_mode {
+            // Already in scroll mode, exit it
+            app.scroll_mode = false;
+            app.scroll_buffer = None;
+            return Ok(false);
+        }
+        // Build a scrollback buffer from raw history for scroll mode.
+        if let Some(pane) = app.panes.get(app.focused_pane) {
+            let history: Vec<u8> = pane.raw_history.iter().copied().collect();
+            let filtered = filter_alternate_screen(&history);
+            let (rows, cols) = pane.output_buffer.screen().size();
+            let mut scroll_buf = OutputBuffer::new(rows, cols, 10000);
+            scroll_buf.push_bytes(&filtered);
+            app.scroll_buffer = Some(scroll_buf);
+        } else {
+            app.scroll_buffer = None;
+        }
+        app.scroll_mode = true;
     } else if key.code == KeyCode::PageUp {
         // Scroll up in focused pane
         if let Some(pane) = app.panes.get_mut(app.focused_pane) {
@@ -633,6 +683,10 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent, workers
         if let Some(pane) = app.panes.get_mut(app.focused_pane) {
             pane.output_buffer.scroll_down(10);
         }
+    } else if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('d') {
+        // Detach from session
+        conn.send(ClientMessage::Detach)?;
+        return Ok(true);
     } else if key.code == KeyCode::Home && key.modifiers.contains(KeyModifiers::CONTROL) {
         // Scroll to top of focused pane
         if let Some(pane) = app.panes.get_mut(app.focused_pane) {
@@ -757,6 +811,93 @@ fn handle_projects_key(app: &mut App, key: KeyEvent) -> Result<bool> {
         _ => {}
     }
 
+    Ok(false)
+}
+
+fn handle_task_queue_key(app: &mut App, key: KeyEvent) -> Result<bool> {
+    let max_lines = crate::ui::task_queue::count_lines(app);
+
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            app.show_task_queue = false;
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.task_queue_selection > 0 {
+                app.task_queue_selection -= 1;
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if app.task_queue_selection + 1 < max_lines {
+                app.task_queue_selection += 1;
+            }
+        }
+        KeyCode::Char(' ') => {
+            // Toggle expand/collapse if on a lane header
+            if let Some(lane) = crate::ui::task_queue::get_selected_lane(app) {
+                let expanded = app.task_queue_expanded.get(&lane).copied().unwrap_or(true);
+                app.task_queue_expanded.insert(lane, !expanded);
+            }
+        }
+        KeyCode::Enter => {
+            // Jump to lane's worker pane if on a lane header
+            if let Some(lane) = crate::ui::task_queue::get_selected_lane(app) {
+                // Find the pane with this lane
+                if let Some((idx, _)) = app.panes.iter().enumerate().find(|(_, p)| {
+                    p.lane.as_deref() == Some(&lane)
+                }) {
+                    app.focused_pane = idx;
+                    app.show_task_queue = false;
+                }
+            }
+        }
+        _ => {}
+    }
+
+    Ok(false)
+}
+
+fn handle_scroll_mode_key(app: &mut App, key: KeyEvent) -> Result<bool> {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            app.scroll_mode = false;
+            app.scroll_buffer = None;
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if let Some(ref mut scroll_buf) = app.scroll_buffer {
+                scroll_buf.scroll_up(1);
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if let Some(ref mut scroll_buf) = app.scroll_buffer {
+                scroll_buf.scroll_down(1);
+            }
+        }
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Half page up
+            if let Some(ref mut scroll_buf) = app.scroll_buffer {
+                scroll_buf.scroll_up(15);
+            }
+        }
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Half page down
+            if let Some(ref mut scroll_buf) = app.scroll_buffer {
+                scroll_buf.scroll_down(15);
+            }
+        }
+        KeyCode::Char('g') => {
+            // Scroll to top
+            if let Some(ref mut scroll_buf) = app.scroll_buffer {
+                scroll_buf.scroll_to_top();
+            }
+        }
+        KeyCode::Char('G') => {
+            // Scroll to bottom
+            if let Some(ref mut scroll_buf) = app.scroll_buffer {
+                scroll_buf.scroll_to_bottom();
+            }
+        }
+        _ => {}
+    }
     Ok(false)
 }
 

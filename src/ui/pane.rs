@@ -1,10 +1,11 @@
 use ratatui::prelude::*;
 use ratatui::style::Modifier;
 use ratatui::widgets::{Block, Borders};
-use tui_term::widget::PseudoTerminal;
+use tui_term::widget::{Cursor, PseudoTerminal};
 
 use crate::app::state::ClientPane;
 use crate::app::types::PaneType;
+use crate::pty::output::OutputBuffer;
 
 pub fn render_pane(
     frame: &mut Frame,
@@ -12,6 +13,7 @@ pub fn render_pane(
     pane: &ClientPane,
     focused: bool,
     sidebar_focused: bool,
+    scroll_buffer: Option<&OutputBuffer>,
 ) {
     let (border_color, title_color) = if focused {
         (Color::Yellow, Color::Yellow)
@@ -39,7 +41,12 @@ pub fn render_pane(
             }
         }
     };
-    let scroll_offset = pane.output_buffer.scroll_offset();
+    // Show scroll offset from scroll_buffer if provided, otherwise from pane's buffer
+    let scroll_offset = if let Some(scroll_buf) = scroll_buffer {
+        scroll_buf.scroll_offset()
+    } else {
+        pane.output_buffer.scroll_offset()
+    };
     if scroll_offset > 0 {
         title.push_str(&format!(" [scroll {}]", scroll_offset));
     }
@@ -57,9 +64,18 @@ pub fn render_pane(
         Style::default()
     };
 
-    let terminal = PseudoTerminal::new(pane.output_buffer.screen())
-        .block(block)
-        .style(terminal_style);
+    // Use scroll_buffer if provided (for scroll mode)
+    let terminal = if let Some(scroll_buf) = scroll_buffer {
+        let cursor = Cursor::default().visibility(false);
+        PseudoTerminal::new(scroll_buf.screen())
+            .block(block)
+            .style(terminal_style)
+            .cursor(cursor)
+    } else {
+        PseudoTerminal::new(pane.output_buffer.screen())
+            .block(block)
+            .style(terminal_style)
+    };
 
     frame.render_widget(terminal, area);
 

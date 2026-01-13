@@ -38,6 +38,9 @@ pub struct ClientPane {
     pub branch: Option<BranchConfig>,
     pub group: Option<String>,
     pub visible: bool,
+    /// Raw output history for tmux-style scrollback
+    pub raw_history: std::collections::VecDeque<u8>,
+    pub raw_history_max: usize,
 }
 
 pub struct App {
@@ -67,6 +70,12 @@ pub struct App {
     pub worker_page: usize,
     pub smart_mode: bool,
     pub architect_left: bool,
+    pub show_task_queue: bool,
+    pub task_queue_selection: usize,
+    pub task_queue_expanded: HashMap<String, bool>,
+    pub scroll_mode: bool,
+    /// Temporary buffer for scroll mode (parsed from raw_history)
+    pub scroll_buffer: Option<crate::pty::output::OutputBuffer>,
 }
 
 impl App {
@@ -103,6 +112,11 @@ impl App {
             worker_page: 0,
             smart_mode: false,
             architect_left: false,
+            show_task_queue: false,
+            task_queue_selection: 0,
+            task_queue_expanded: HashMap::new(),
+            scroll_mode: false,
+            scroll_buffer: None,
         }
     }
 
@@ -225,7 +239,7 @@ impl App {
 
         let mut existing_buffers = std::collections::HashMap::new();
         for pane in self.panes.drain(..) {
-            existing_buffers.insert(pane.id.clone(), pane.output_buffer);
+            existing_buffers.insert(pane.id.clone(), (pane.output_buffer, pane.raw_history));
         }
 
         self.panes = state
@@ -271,11 +285,11 @@ impl LayoutKind {
 
 fn pane_info_to_client(
     pane: PaneInfo,
-    buffers: &mut std::collections::HashMap<String, OutputBuffer>,
+    buffers: &mut std::collections::HashMap<String, (OutputBuffer, std::collections::VecDeque<u8>)>,
 ) -> ClientPane {
-    let output_buffer = buffers
+    let (output_buffer, raw_history) = buffers
         .remove(&pane.id)
-        .unwrap_or_else(|| OutputBuffer::new(24, 80, 2000));
+        .unwrap_or_else(|| (OutputBuffer::new(24, 80, 2000), std::collections::VecDeque::new()));
 
     ClientPane {
         id: pane.id,
@@ -285,6 +299,8 @@ fn pane_info_to_client(
         branch: pane.branch,
         group: pane.group,
         visible: pane.visible,
+        raw_history,
+        raw_history_max: 500_000, // 500KB of history
     }
 }
 
