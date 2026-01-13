@@ -19,6 +19,8 @@ Hive is a native terminal multiplexer for orchestrating multiple Claude or Codex
          6/7 visible | [1/2] | backend: claude | mode: INPUT
 ```
 
+The **architect** plans work and creates tasks. **Workers** below execute tasks in parallel—each assigned to a lane (like `backend/features` or `android`). Lanes can be grouped (e.g., all `backend/*` lanes working on the same repo).
+
 ---
 
 ## Features
