@@ -211,7 +211,6 @@ fn normalize_glyph(c: char) -> char {
     }
 }
 
-
 fn map_color(color: AnsiColor, palette: &Colors) -> Color {
     match color {
         AnsiColor::Spec(rgb) => Color::Rgb(rgb.r, rgb.g, rgb.b),

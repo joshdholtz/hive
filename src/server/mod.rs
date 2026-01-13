@@ -10,13 +10,13 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
-use crate::app::{build_nudge_message, build_startup_message};
 use crate::app::state::{AppWindow, LayoutKind, LayoutMode};
 use crate::app::types::PaneType;
+use crate::app::{build_nudge_message, build_startup_message};
 use crate::config::{self, HiveConfig, TaskSource};
 use crate::ipc::{
-    decode_client_message, encode_message, AppState, ClientMessage, PaneInfo, PaneSize, ServerMessage,
-    WindowInfo,
+    decode_client_message, encode_message, AppState, ClientMessage, PaneInfo, PaneSize,
+    ServerMessage, WindowInfo,
 };
 use crate::pty::{spawn_agent, spawn_reader_thread, Pane, PaneEvent};
 use crate::tasks::{counts_for_lane, load_tasks, spawn_yaml_watcher, NudgeRequest};
@@ -212,9 +212,17 @@ struct ServerState {
 }
 
 enum ServerEvent {
-    ClientConnected { client_id: usize, sender: Sender<ServerMessage> },
-    ClientMessage { client_id: usize, message: ClientMessage },
-    ClientDisconnected { client_id: usize },
+    ClientConnected {
+        client_id: usize,
+        sender: Sender<ServerMessage>,
+    },
+    ClientMessage {
+        client_id: usize,
+        message: ClientMessage,
+    },
+    ClientDisconnected {
+        client_id: usize,
+    },
 }
 
 #[derive(Clone)]
@@ -269,7 +277,10 @@ fn event_loop(
                     log_line(&state.log_path, "nudge-triggered");
                     refresh_task_counts(&mut state).ok();
                     let nudged = nudge_workers(&mut state, None).unwrap_or_default();
-                    log_line(&state.log_path, &format!("nudge-result workers={:?}", nudged));
+                    log_line(
+                        &state.log_path,
+                        &format!("nudge-result workers={:?}", nudged),
+                    );
                     broadcast_state(&state, &mut clients);
                 }
             }
@@ -278,7 +289,10 @@ fn event_loop(
         while let Ok(event) = pane_rx.try_recv() {
             match event {
                 PaneEvent::Output { pane_id, data } => {
-                    log_line(&state.log_path, &format!("pane-output {} bytes={}", pane_id, data.len()));
+                    log_line(
+                        &state.log_path,
+                        &format!("pane-output {} bytes={}", pane_id, data.len()),
+                    );
 
                     // Detect cursor position query (ESC[6n) and auto-respond
                     // This fixes codex which queries cursor position and times out
@@ -301,7 +315,10 @@ fn event_loop(
                     broadcast(&mut clients, ServerMessage::PaneExited { pane_id });
                 }
                 PaneEvent::Error { pane_id, error } => {
-                    log_line(&state.log_path, &format!("pane-error {} {}", pane_id, error));
+                    log_line(
+                        &state.log_path,
+                        &format!("pane-error {} {}", pane_id, error),
+                    );
                     let message = format!("[error] {}", error);
                     broadcast(
                         &mut clients,
@@ -318,7 +335,10 @@ fn event_loop(
             Ok(event) => match event {
                 ServerEvent::ClientConnected { client_id, sender } => {
                     log_line(&state.log_path, &format!("client-connected {}", client_id));
-                    clients.push(ClientHandle { id: client_id, sender });
+                    clients.push(ClientHandle {
+                        id: client_id,
+                        sender,
+                    });
                     let handle = clients.last().cloned();
                     broadcast_state(&state, &mut clients);
                     if let Some(handle) = handle {
@@ -333,7 +353,10 @@ fn event_loop(
                     }
                 }
                 ServerEvent::ClientDisconnected { client_id } => {
-                    log_line(&state.log_path, &format!("client-disconnected {}", client_id));
+                    log_line(
+                        &state.log_path,
+                        &format!("client-disconnected {}", client_id),
+                    );
                     clients.retain(|client| client.id != client_id);
                 }
             },
@@ -483,8 +506,12 @@ fn spawn_workspace_panes(
         workspace_dir.display()
     );
 
-    let (arch_master, arch_child, arch_writer) =
-        spawn_agent(config.architect.backend, &architect_message, workspace_dir, false)?;
+    let (arch_master, arch_child, arch_writer) = spawn_agent(
+        config.architect.backend,
+        &architect_message,
+        workspace_dir,
+        false,
+    )?;
 
     panes.push(Pane {
         id: "architect".to_string(),
@@ -518,7 +545,10 @@ fn spawn_workspace_panes(
             shell::run_shell_command(cmd, &worker.working_dir)?;
         }
 
-        let lane_role_path = workspace_dir.join("lanes").join(&worker.lane).join("WORKER.md");
+        let lane_role_path = workspace_dir
+            .join("lanes")
+            .join(&worker.lane)
+            .join("WORKER.md");
         let startup_message = format!(
             "Read {}. Your lane is '{}'. Check {}/tasks.yaml for your tasks.",
             lane_role_path.display(),
@@ -527,17 +557,24 @@ fn spawn_workspace_panes(
         );
 
         // Group by project
-        let group = worker.project_path
+        let group = worker
+            .project_path
             .file_name()
             .and_then(|n| n.to_str())
             .map(|s| s.to_string());
 
-        let (master, child, writer) =
-            spawn_agent(config.workers.backend, &startup_message, &worker.working_dir, config.workers.skip_permissions)?;
+        let (master, child, writer) = spawn_agent(
+            config.workers.backend,
+            &startup_message,
+            &worker.working_dir,
+            config.workers.skip_permissions,
+        )?;
 
         let pane = Pane {
             id: worker.id.clone(),
-            pane_type: PaneType::Worker { lane: worker.lane.clone() },
+            pane_type: PaneType::Worker {
+                lane: worker.lane.clone(),
+            },
             master,
             child,
             writer,
@@ -570,7 +607,9 @@ fn create_compat_config(
     config: &WorkspaceConfig,
     workers: &[crate::workspace::RuntimeWorker],
 ) -> HiveConfig {
-    use crate::config::{ArchitectConfig, TasksConfig, TaskSource, WindowConfig, WorkerConfig, WorkersConfig};
+    use crate::config::{
+        ArchitectConfig, TaskSource, TasksConfig, WindowConfig, WorkerConfig, WorkersConfig,
+    };
 
     let worker_configs: Vec<WorkerConfig> = workers
         .iter()
@@ -624,8 +663,12 @@ fn spawn_panes(config: &HiveConfig, project_dir: &Path) -> Result<(Vec<Pane>, Ve
     let mut windows = Vec::new();
     let group_counts = build_group_counts(config, project_dir);
 
-    let (arch_master, arch_child, arch_writer) =
-        spawn_agent(config.architect.backend, ARCHITECT_MESSAGE, project_dir, false)?;
+    let (arch_master, arch_child, arch_writer) = spawn_agent(
+        config.architect.backend,
+        ARCHITECT_MESSAGE,
+        project_dir,
+        false,
+    )?;
 
     panes.push(Pane {
         id: "architect".to_string(),
@@ -660,8 +703,12 @@ fn spawn_panes(config: &HiveConfig, project_dir: &Path) -> Result<(Vec<Pane>, Ve
             let startup_message = build_startup_message(config, &lane);
             let group = group_for_dir(&working_dir, project_dir, &group_counts);
 
-            let (master, child, writer) =
-                spawn_agent(config.workers.backend, &startup_message, &working_dir, config.workers.skip_permissions)?;
+            let (master, child, writer) = spawn_agent(
+                config.workers.backend,
+                &startup_message,
+                &working_dir,
+                config.workers.skip_permissions,
+            )?;
 
             let pane = Pane {
                 id: worker.id.clone(),
@@ -735,7 +782,10 @@ fn group_name_for_dir(working_dir: &Path, project_dir: &Path) -> Option<String> 
 fn nudge_workers(state: &mut ServerState, specific_worker: Option<&str>) -> Result<Vec<String>> {
     let mut nudged = Vec::new();
 
-    log_line(&state.log_path, &format!("nudge-workers task_counts={:?}", state.task_counts));
+    log_line(
+        &state.log_path,
+        &format!("nudge-workers task_counts={:?}", state.task_counts),
+    );
 
     for pane in &mut state.panes {
         let lane = match &pane.pane_type {
@@ -786,7 +836,15 @@ fn nudge_workers(state: &mut ServerState, specific_worker: Option<&str>) -> Resu
             // Send Enter to submit (CR is what terminals send for Enter)
             crate::pty::send_bytes(&mut pane.writer, b"\r")?;
 
-            log_line(&state.log_path, &format!("nudge-sent worker={} backend={:?} message_len={} (char-by-char)", pane.id, pane.backend, message.len()));
+            log_line(
+                &state.log_path,
+                &format!(
+                    "nudge-sent worker={} backend={:?} message_len={} (char-by-char)",
+                    pane.id,
+                    pane.backend,
+                    message.len()
+                ),
+            );
 
             nudged.push(pane.id.clone());
         }
@@ -801,17 +859,29 @@ fn refresh_task_counts(state: &mut ServerState) -> Result<()> {
         return Ok(());
     };
 
-    log_line(&state.log_path, &format!("refresh_task_counts: loading {}", tasks_file.display()));
+    log_line(
+        &state.log_path,
+        &format!("refresh_task_counts: loading {}", tasks_file.display()),
+    );
 
     let tasks = match load_tasks(tasks_file) {
         Ok(t) => t,
         Err(e) => {
-            log_line(&state.log_path, &format!("refresh_task_counts: load error: {}", e));
+            log_line(
+                &state.log_path,
+                &format!("refresh_task_counts: load error: {}", e),
+            );
             return Err(e);
         }
     };
 
-    log_line(&state.log_path, &format!("refresh_task_counts: loaded tasks, projects={:?}", tasks.projects.keys().collect::<Vec<_>>()));
+    log_line(
+        &state.log_path,
+        &format!(
+            "refresh_task_counts: loaded tasks, projects={:?}",
+            tasks.projects.keys().collect::<Vec<_>>()
+        ),
+    );
 
     let mut counts = HashMap::new();
 
@@ -819,7 +889,13 @@ fn refresh_task_counts(state: &mut ServerState) -> Result<()> {
         for worker in &window.workers {
             let lane = worker.lane.clone().unwrap_or_else(|| worker.id.clone());
             let lane_counts = counts_for_lane(&tasks, &lane);
-            log_line(&state.log_path, &format!("refresh_task_counts: lane={} counts={:?}", lane, lane_counts));
+            log_line(
+                &state.log_path,
+                &format!(
+                    "refresh_task_counts: lane={} counts={:?}",
+                    lane, lane_counts
+                ),
+            );
             counts.insert(lane, lane_counts);
         }
     }
@@ -829,7 +905,9 @@ fn refresh_task_counts(state: &mut ServerState) -> Result<()> {
 }
 
 fn broadcast_state(state: &ServerState, clients: &mut Vec<ClientHandle>) {
-    let message = ServerMessage::State { state: build_state(state) };
+    let message = ServerMessage::State {
+        state: build_state(state),
+    };
     broadcast(clients, message);
 }
 
@@ -966,7 +1044,11 @@ fn load_ui_state(project_dir: &Path) -> UiState {
 fn save_ui_state(project_dir: &Path, state: &ServerState) {
     let ui_state = UiState {
         pane_order: state.panes.iter().map(|p| p.id.clone()).collect(),
-        visibility: state.panes.iter().map(|p| (p.id.clone(), p.visible)).collect(),
+        visibility: state
+            .panes
+            .iter()
+            .map(|p| (p.id.clone(), p.visible))
+            .collect(),
         architect_left: state.architect_left,
     };
     let path = ui_state_path(project_dir);
@@ -998,7 +1080,11 @@ fn apply_ui_state(panes: &mut Vec<Pane>, ui_state: &UiState) {
 }
 
 fn log_line(path: &Path, line: &str) {
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
         let _ = writeln!(file, "{}", line);
     }
 }

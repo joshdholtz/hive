@@ -20,8 +20,8 @@ pub fn load_projects() -> Result<ProjectsFile> {
     if !path.exists() {
         return Ok(ProjectsFile::default());
     }
-    let content = fs::read_to_string(&path)
-        .with_context(|| format!("Failed reading {}", path.display()))?;
+    let content =
+        fs::read_to_string(&path).with_context(|| format!("Failed reading {}", path.display()))?;
     let projects = serde_yaml::from_str(&content)
         .with_context(|| format!("Failed parsing {}", path.display()))?;
     Ok(projects)
@@ -33,8 +33,7 @@ pub fn save_projects(projects: &ProjectsFile) -> Result<()> {
         fs::create_dir_all(parent)?;
     }
     let content = serde_yaml::to_string(projects)?;
-    fs::write(&path, content)
-        .with_context(|| format!("Failed writing {}", path.display()))?;
+    fs::write(&path, content).with_context(|| format!("Failed writing {}", path.display()))?;
     Ok(())
 }
 
@@ -47,9 +46,14 @@ pub fn add_project(path: &Path, name: Option<String>) -> Result<ProjectsFile> {
     if let Some(existing) = projects.projects.iter_mut().find(|p| p.path == path_str) {
         existing.name = name;
     } else {
-        projects.projects.push(ProjectEntry { name, path: path_str });
+        projects.projects.push(ProjectEntry {
+            name,
+            path: path_str,
+        });
     }
-    projects.projects.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    projects
+        .projects
+        .sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     save_projects(&projects)?;
     Ok(projects)
 }

@@ -49,7 +49,8 @@ pub fn run(start_dir: &Path, specific_worker: Option<&str>) -> Result<()> {
                 };
 
                 if should_nudge {
-                    let message = build_nudge_message(&config, &lane, counts.backlog, &worker.branch);
+                    let message =
+                        build_nudge_message(&config, &lane, counts.backlog, &worker.branch);
                     println!("[{}] {}", worker.id, message);
                 }
             }

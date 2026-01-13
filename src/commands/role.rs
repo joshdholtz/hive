@@ -33,7 +33,10 @@ pub fn run(start_dir: &Path, specific_worker: Option<&str>) -> Result<()> {
             let mut content = String::new();
 
             content.push_str(&format!("# Worker Role: {}\n\n", worker.id));
-            content.push_str(&format!("You are a background worker assigned to lane **{}**.\n\n", lane));
+            content.push_str(&format!(
+                "You are a background worker assigned to lane **{}**.\n\n",
+                lane
+            ));
             content.push_str("## General Behavior\n");
             content.push_str("1. Check your task backlog and claim ONE task at a time\n");
             content.push_str("2. Implement the task completely\n");
@@ -42,7 +45,10 @@ pub fn run(start_dir: &Path, specific_worker: Option<&str>) -> Result<()> {
             content.push_str("5. Do NOT stop working until you see a PR URL displayed\n\n");
             content.push_str("## When Backlog is Empty\n");
             content.push_str("If your lane's backlog is empty, **STOP IMMEDIATELY**.\n");
-            content.push_str(&format!("- Report \"No tasks in backlog for lane {}\"\n", lane));
+            content.push_str(&format!(
+                "- Report \"No tasks in backlog for lane {}\"\n",
+                lane
+            ));
             content.push_str("- Do NOT look for other work\n");
             content.push_str("- Do NOT explore the codebase\n");
             content.push_str("- Do NOT make suggestions\n");
@@ -58,7 +64,10 @@ pub fn run(start_dir: &Path, specific_worker: Option<&str>) -> Result<()> {
 
             if let Some(branch) = &worker.branch {
                 content.push_str("## Branch Naming Convention\n");
-                content.push_str(&format!("- Create local branches with prefix: `{}/`\n", branch.local));
+                content.push_str(&format!(
+                    "- Create local branches with prefix: `{}/`\n",
+                    branch.local
+                ));
                 content.push_str(&format!("- Example: `{}/my-feature`\n", branch.local));
                 content.push_str(&format!(
                     "- Push command: `git push origin {}/my-feature:{}/my-feature`\n\n",
@@ -70,7 +79,10 @@ pub fn run(start_dir: &Path, specific_worker: Option<&str>) -> Result<()> {
                 TaskSource::Github => {
                     if let Some(project) = config.tasks.github_project {
                         content.push_str("## Task Source\n");
-                        content.push_str(&format!("Tasks are managed in GitHub Project #{}.\n", project));
+                        content.push_str(&format!(
+                            "Tasks are managed in GitHub Project #{}.\n",
+                            project
+                        ));
                         content.push_str("- View your lane's backlog in the project board\n");
                         content.push_str("- Move tasks to \"In Progress\" when you start\n");
                         content.push_str("- Move tasks to \"Done\" when PR is merged\n\n");
@@ -79,7 +91,10 @@ pub fn run(start_dir: &Path, specific_worker: Option<&str>) -> Result<()> {
                 TaskSource::Yaml => {
                     let rel_tasks = relative_tasks_path(&worker_dir, &tasks_file);
                     content.push_str("## Task Source\n");
-                    content.push_str(&format!("Tasks are managed in `{}` (relative to your working directory).\n", rel_tasks.display()));
+                    content.push_str(&format!(
+                        "Tasks are managed in `{}` (relative to your working directory).\n",
+                        rel_tasks.display()
+                    ));
                     content.push_str(&format!("- Your lane: `{}`\n", lane));
                     content.push_str("- Check the `backlog` section for pending tasks\n");
                     content.push_str("- Move tasks to `in_progress` when you start\n");
@@ -150,10 +165,13 @@ fn generate_architect_role(
     content.push_str("## Core Principles\n\n");
     content.push_str("1. **Planning only** - You do NOT edit code or make commits\n");
     content.push_str("2. **Research first** - Explore the codebase before proposing tasks\n");
-    content.push_str("3. **Get confirmation** - List task titles and wait for user approval before adding\n");
+    content.push_str(
+        "3. **Get confirmation** - List task titles and wait for user approval before adding\n",
+    );
     content.push_str("4. **One task at a time per worker** - Don't overload the backlog\n\n");
     content.push_str("## Your Responsibilities\n\n");
-    content.push_str("- Convert user intent into well-scoped tasks with clear acceptance criteria\n");
+    content
+        .push_str("- Convert user intent into well-scoped tasks with clear acceptance criteria\n");
     content.push_str("- Place tasks in the correct lane for the appropriate worker\n");
     content.push_str("- Ask clarifying questions instead of guessing\n");
     content.push_str("- Monitor worker progress and unblock them when needed\n\n");
@@ -170,7 +188,10 @@ fn generate_architect_role(
         TaskSource::Github => {
             if let Some(project) = config.tasks.github_project {
                 content.push_str("## Task Management\n\n");
-                content.push_str(&format!("Tasks are managed in **GitHub Project #{}**.\n\n", project));
+                content.push_str(&format!(
+                    "Tasks are managed in **GitHub Project #{}**.\n\n",
+                    project
+                ));
                 content.push_str("Use the GitHub Project board to:\n");
                 content.push_str("- Add new tasks to the appropriate lane's backlog\n");
                 content.push_str("- Monitor task status (Backlog → In Progress → Done)\n");
@@ -179,12 +200,16 @@ fn generate_architect_role(
         }
         TaskSource::Yaml => {
             content.push_str("## Task Management\n\n");
-            content.push_str(&format!("Tasks are managed in `{}`.\n\n", tasks_file.display()));
+            content.push_str(&format!(
+                "Tasks are managed in `{}`.\n\n",
+                tasks_file.display()
+            ));
             content.push_str("### Adding a Task\n\n");
             content.push_str("```yaml\n<lane-name>:\n  backlog:\n    - id: my-task-id\n      title: Short title for the task\n      description: |\n        Detailed description of what needs to be done.\n      priority: high\n      acceptance:\n        - First acceptance criterion\n        - Second acceptance criterion\n```\n\n");
             content.push_str("### Task Lifecycle\n\n");
             content.push_str("1. **backlog** - Tasks waiting to be claimed\n");
-            content.push_str("2. **in_progress** - Worker is actively working (max 1 per worker)\n");
+            content
+                .push_str("2. **in_progress** - Worker is actively working (max 1 per worker)\n");
             content.push_str("3. **done** - Completed with summary\n\n");
             content.push_str("### YAML Validation (CRITICAL)\n\n");
             content.push_str("When editing tasks.yaml, you MUST ensure valid YAML:\n");

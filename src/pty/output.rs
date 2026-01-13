@@ -65,10 +65,7 @@ impl OutputBuffer {
     }
 
     pub fn size(&self) -> (u16, u16) {
-        (
-            self.term.screen_lines() as u16,
-            self.term.columns() as u16,
-        )
+        (self.term.screen_lines() as u16, self.term.columns() as u16)
     }
 
     pub fn scroll_offset(&self) -> usize {
@@ -129,11 +126,13 @@ pub fn extract_plain_text(data: &[u8]) -> String {
                 // OSC sequence - skip until BEL or ST
                 i += 2;
                 while i < data.len() {
-                    if data[i] == 0x07 { // BEL
+                    if data[i] == 0x07 {
+                        // BEL
                         i += 1;
                         break;
                     }
-                    if data[i] == 0x1b && i + 1 < data.len() && data[i + 1] == b'\\' { // ST
+                    if data[i] == 0x1b && i + 1 < data.len() && data[i + 1] == b'\\' {
+                        // ST
                         i += 2;
                         break;
                     }

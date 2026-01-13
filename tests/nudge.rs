@@ -22,7 +22,10 @@ fn test_pty_enter_with_cat() {
     let _child = pair.slave.spawn_command(cmd).expect("Failed to spawn cat");
 
     let mut writer = pair.master.take_writer().expect("Failed to take writer");
-    let mut reader = pair.master.try_clone_reader().expect("Failed to clone reader");
+    let mut reader = pair
+        .master
+        .try_clone_reader()
+        .expect("Failed to clone reader");
 
     // Send "hello" followed by Enter (\r)
     writer.write_all(b"hello\r").expect("Failed to write");
@@ -43,7 +46,11 @@ fn test_pty_enter_with_cat() {
     println!("PTY output: {:?}", output_str);
 
     // cat should have echoed "hello" back
-    assert!(output_str.contains("hello"), "Expected 'hello' in output, got: {}", output_str);
+    assert!(
+        output_str.contains("hello"),
+        "Expected 'hello' in output, got: {}",
+        output_str
+    );
 }
 
 /// Test that newline (\n) also works for PTY input
@@ -65,7 +72,10 @@ fn test_pty_newline_with_cat() {
     let _child = pair.slave.spawn_command(cmd).expect("Failed to spawn cat");
 
     let mut writer = pair.master.take_writer().expect("Failed to take writer");
-    let mut reader = pair.master.try_clone_reader().expect("Failed to clone reader");
+    let mut reader = pair
+        .master
+        .try_clone_reader()
+        .expect("Failed to clone reader");
 
     // Send "world" followed by newline (\n)
     writer.write_all(b"world\n").expect("Failed to write");
@@ -82,7 +92,11 @@ fn test_pty_newline_with_cat() {
     let output_str = String::from_utf8_lossy(&output);
     println!("PTY output with \\n: {:?}", output_str);
 
-    assert!(output_str.contains("world"), "Expected 'world' in output, got: {}", output_str);
+    assert!(
+        output_str.contains("world"),
+        "Expected 'world' in output, got: {}",
+        output_str
+    );
 }
 
 /// Test escape + message + enter sequence
@@ -104,7 +118,10 @@ fn test_pty_escape_message_enter() {
     let _child = pair.slave.spawn_command(cmd).expect("Failed to spawn cat");
 
     let mut writer = pair.master.take_writer().expect("Failed to take writer");
-    let mut reader = pair.master.try_clone_reader().expect("Failed to clone reader");
+    let mut reader = pair
+        .master
+        .try_clone_reader()
+        .expect("Failed to clone reader");
 
     // Send Escape + message + Enter (what nudge does)
     let message = "test message";
@@ -124,7 +141,11 @@ fn test_pty_escape_message_enter() {
     println!("PTY output with ESC+msg+CR: {:?}", output_str);
 
     // The message should appear in output (cat echoes everything)
-    assert!(output_str.contains("test message"), "Expected 'test message' in output, got: {}", output_str);
+    assert!(
+        output_str.contains("test message"),
+        "Expected 'test message' in output, got: {}",
+        output_str
+    );
 }
 
 /// Test with a shell script that simulates readline behavior
@@ -149,7 +170,10 @@ fn test_pty_with_read_command() {
     let _child = pair.slave.spawn_command(cmd).expect("Failed to spawn bash");
 
     let mut writer = pair.master.take_writer().expect("Failed to take writer");
-    let mut reader = pair.master.try_clone_reader().expect("Failed to clone reader");
+    let mut reader = pair
+        .master
+        .try_clone_reader()
+        .expect("Failed to clone reader");
 
     // Send input + Enter
     writer.write_all(b"myinput\r").expect("Failed to write");
@@ -172,7 +196,11 @@ fn test_pty_with_read_command() {
     println!("Bash read output: {:?}", output_str);
 
     // Should see "GOT: myinput" in output
-    assert!(output_str.contains("GOT: myinput"), "Expected 'GOT: myinput' in output, got: {}", output_str);
+    assert!(
+        output_str.contains("GOT: myinput"),
+        "Expected 'GOT: myinput' in output, got: {}",
+        output_str
+    );
 }
 
 /// Test different key sequences to find what works
@@ -204,7 +232,10 @@ fn test_various_enter_sequences() {
         let _child = pair.slave.spawn_command(cmd).expect("Failed to spawn");
 
         let mut writer = pair.master.take_writer().expect("Failed to take writer");
-        let mut reader = pair.master.try_clone_reader().expect("Failed to clone reader");
+        let mut reader = pair
+            .master
+            .try_clone_reader()
+            .expect("Failed to clone reader");
 
         // Send "test" + enter sequence
         writer.write_all(b"test").expect("Failed to write");
@@ -218,7 +249,12 @@ fn test_various_enter_sequences() {
 
         let output_str = String::from_utf8_lossy(&output);
         let success = output_str.contains("RECEIVED: test");
-        println!("{}: {} - output: {:?}", name, if success { "PASS" } else { "FAIL" }, output_str);
+        println!(
+            "{}: {} - output: {:?}",
+            name,
+            if success { "PASS" } else { "FAIL" },
+            output_str
+        );
     }
 }
 
@@ -249,14 +285,26 @@ fn test_codex_cli_input() {
 
     // Start codex with a simple prompt
     let mut cmd = CommandBuilder::new("codex");
-    cmd.args(["--sandbox", "danger-full-access", "--ask-for-approval", "never", "echo hello"]);
+    cmd.args([
+        "--sandbox",
+        "danger-full-access",
+        "--ask-for-approval",
+        "never",
+        "echo hello",
+    ]);
     cmd.env("TERM", "xterm-256color");
 
     println!("Starting Codex CLI...");
-    let _child = pair.slave.spawn_command(cmd).expect("Failed to spawn codex");
+    let _child = pair
+        .slave
+        .spawn_command(cmd)
+        .expect("Failed to spawn codex");
 
     let mut writer = pair.master.take_writer().expect("Failed to take writer");
-    let mut reader = pair.master.try_clone_reader().expect("Failed to clone reader");
+    let mut reader = pair
+        .master
+        .try_clone_reader()
+        .expect("Failed to clone reader");
 
     // Wait for Codex to start and process initial prompt
     println!("Waiting for Codex to initialize...");
@@ -265,13 +313,19 @@ fn test_codex_cli_input() {
     // Read initial output
     let mut initial_output = vec![0u8; 8192];
     let n = reader.read(&mut initial_output).unwrap_or(0);
-    println!("Initial output ({} bytes): {:?}", n, String::from_utf8_lossy(&initial_output[..n]));
+    println!(
+        "Initial output ({} bytes): {:?}",
+        n,
+        String::from_utf8_lossy(&initial_output[..n])
+    );
 
     // Now try to send a follow-up prompt
     println!("Sending follow-up prompt...");
     let nudge_message = "echo 'nudge received'";
     let bytes = format!("{}\r", nudge_message);
-    writer.write_all(bytes.as_bytes()).expect("Failed to write nudge");
+    writer
+        .write_all(bytes.as_bytes())
+        .expect("Failed to write nudge");
     writer.flush().expect("Failed to flush");
 
     // Wait for processing
@@ -280,7 +334,11 @@ fn test_codex_cli_input() {
     // Read output after nudge
     let mut nudge_output = vec![0u8; 8192];
     let n = reader.read(&mut nudge_output).unwrap_or(0);
-    println!("Nudge output ({} bytes): {:?}", n, String::from_utf8_lossy(&nudge_output[..n]));
+    println!(
+        "Nudge output ({} bytes): {:?}",
+        n,
+        String::from_utf8_lossy(&nudge_output[..n])
+    );
 
     // Send Ctrl-C to exit
     writer.write_all(b"\x03").expect("Failed to send Ctrl-C");
@@ -332,7 +390,10 @@ fn test_ink_style_input() {
     let _child = pair.slave.spawn_command(cmd).expect("Failed to spawn node");
 
     let mut writer = pair.master.take_writer().expect("Failed to take writer");
-    let mut reader = pair.master.try_clone_reader().expect("Failed to clone reader");
+    let mut reader = pair
+        .master
+        .try_clone_reader()
+        .expect("Failed to clone reader");
 
     // Wait for script to initialize
     std::thread::sleep(Duration::from_millis(500));
@@ -340,7 +401,11 @@ fn test_ink_style_input() {
     // Read initial output
     let mut initial_output = vec![0u8; 4096];
     let n = reader.read(&mut initial_output).unwrap_or(0);
-    println!("Initial output ({} bytes): {:?}", n, String::from_utf8_lossy(&initial_output[..n]));
+    println!(
+        "Initial output ({} bytes): {:?}",
+        n,
+        String::from_utf8_lossy(&initial_output[..n])
+    );
 
     // Test 1: Send text + CR in one write
     println!("\n--- Test 1: text + CR together ---");
@@ -350,7 +415,10 @@ fn test_ink_style_input() {
 
     let mut output1 = vec![0u8; 4096];
     let n = reader.read(&mut output1).unwrap_or(0);
-    println!("Output after 'hello\\r': {:?}", String::from_utf8_lossy(&output1[..n]));
+    println!(
+        "Output after 'hello\\r': {:?}",
+        String::from_utf8_lossy(&output1[..n])
+    );
 
     // Test 2: Send text, delay, then CR separately
     println!("\n--- Test 2: text then CR separately ---");
@@ -363,7 +431,10 @@ fn test_ink_style_input() {
 
     let mut output2 = vec![0u8; 4096];
     let n = reader.read(&mut output2).unwrap_or(0);
-    println!("Output after 'world' then CR: {:?}", String::from_utf8_lossy(&output2[..n]));
+    println!(
+        "Output after 'world' then CR: {:?}",
+        String::from_utf8_lossy(&output2[..n])
+    );
 
     // Test 3: Send text + LF instead of CR
     println!("\n--- Test 3: text + LF ---");
@@ -373,7 +444,10 @@ fn test_ink_style_input() {
 
     let mut output3 = vec![0u8; 4096];
     let n = reader.read(&mut output3).unwrap_or(0);
-    println!("Output after 'test\\n': {:?}", String::from_utf8_lossy(&output3[..n]));
+    println!(
+        "Output after 'test\\n': {:?}",
+        String::from_utf8_lossy(&output3[..n])
+    );
 
     // Send Ctrl+C to exit
     writer.write_all(b"\x03").expect("Failed to send Ctrl+C");
@@ -413,10 +487,16 @@ fn test_claude_cli_input() {
     cmd.env("TERM", "xterm-256color");
 
     println!("Starting Claude CLI...");
-    let _child = pair.slave.spawn_command(cmd).expect("Failed to spawn claude");
+    let _child = pair
+        .slave
+        .spawn_command(cmd)
+        .expect("Failed to spawn claude");
 
     let mut writer = pair.master.take_writer().expect("Failed to take writer");
-    let mut reader = pair.master.try_clone_reader().expect("Failed to clone reader");
+    let mut reader = pair
+        .master
+        .try_clone_reader()
+        .expect("Failed to clone reader");
 
     // Wait for Claude to start and process initial prompt
     println!("Waiting for Claude to initialize...");
@@ -425,13 +505,19 @@ fn test_claude_cli_input() {
     // Read initial output
     let mut initial_output = vec![0u8; 8192];
     let n = reader.read(&mut initial_output).unwrap_or(0);
-    println!("Initial output ({} bytes): {:?}", n, String::from_utf8_lossy(&initial_output[..n]));
+    println!(
+        "Initial output ({} bytes): {:?}",
+        n,
+        String::from_utf8_lossy(&initial_output[..n])
+    );
 
     // Now try to send a follow-up prompt
     println!("Sending follow-up prompt...");
     let nudge_message = "echo 'nudge received'";
     let bytes = format!("{}\r", nudge_message);
-    writer.write_all(bytes.as_bytes()).expect("Failed to write nudge");
+    writer
+        .write_all(bytes.as_bytes())
+        .expect("Failed to write nudge");
     writer.flush().expect("Failed to flush");
 
     // Wait for processing
@@ -440,7 +526,11 @@ fn test_claude_cli_input() {
     // Read output after nudge
     let mut nudge_output = vec![0u8; 8192];
     let n = reader.read(&mut nudge_output).unwrap_or(0);
-    println!("Nudge output ({} bytes): {:?}", n, String::from_utf8_lossy(&nudge_output[..n]));
+    println!(
+        "Nudge output ({} bytes): {:?}",
+        n,
+        String::from_utf8_lossy(&nudge_output[..n])
+    );
 
     // Send Ctrl-C to exit
     writer.write_all(b"\x03").expect("Failed to send Ctrl-C");

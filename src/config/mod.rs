@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 pub use parser::{
-    load_config, find_config, ArchitectConfig, Backend, BranchConfig, HiveConfig, MessagesConfig,
+    find_config, load_config, ArchitectConfig, Backend, BranchConfig, HiveConfig, MessagesConfig,
     TaskSource, TasksConfig, WindowConfig, WorkerConfig, WorkersConfig,
 };
 
@@ -19,11 +19,7 @@ pub fn project_dir(config_path: &Path) -> PathBuf {
 
 pub fn tasks_file_path(config_path: &Path, config: &parser::HiveConfig) -> PathBuf {
     let base = project_dir(config_path);
-    let tasks_file = config
-        .tasks
-        .file
-        .as_deref()
-        .unwrap_or(".hive/tasks.yaml");
+    let tasks_file = config.tasks.file.as_deref().unwrap_or(".hive/tasks.yaml");
     base.join(tasks_file)
 }
 

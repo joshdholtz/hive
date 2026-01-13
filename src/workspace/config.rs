@@ -180,7 +180,10 @@ mod tests {
 
     #[test]
     fn test_slug_from_path() {
-        assert_eq!(slug_from_path(Path::new("/foo/bar/My Project")), "my-project");
+        assert_eq!(
+            slug_from_path(Path::new("/foo/bar/My Project")),
+            "my-project"
+        );
         assert_eq!(slug_from_path(Path::new("/foo/bar/repo-1")), "repo-1");
     }
 
@@ -222,7 +225,10 @@ mod tests {
         assert!(!workers[0].is_worktree);
 
         // Others use worktrees
-        assert!(workers[1].working_dir.to_string_lossy().contains("worktrees"));
+        assert!(workers[1]
+            .working_dir
+            .to_string_lossy()
+            .contains("worktrees"));
         assert!(workers[1].is_worktree);
         assert!(workers[2].is_worktree);
     }

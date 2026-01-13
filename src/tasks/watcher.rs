@@ -15,7 +15,11 @@ pub enum NudgeRequest {
 }
 
 fn log_line(path: &Path, line: &str) {
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
         let _ = writeln!(file, "{}", line);
     }
 }
@@ -38,13 +42,21 @@ pub fn spawn_yaml_watcher(
         };
 
         if let Err(e) = watcher.watch(&tasks_file, RecursiveMode::NonRecursive) {
-            log_line(&log_path, &format!("watcher: failed to watch {}: {}", tasks_file.display(), e));
+            log_line(
+                &log_path,
+                &format!("watcher: failed to watch {}: {}", tasks_file.display(), e),
+            );
             return;
         }
 
-        log_line(&log_path, &format!("watcher: watching {}", tasks_file.display()));
+        log_line(
+            &log_path,
+            &format!("watcher: watching {}", tasks_file.display()),
+        );
 
-        let mut last_nudge = Instant::now().checked_sub(debounce * 2).unwrap_or_else(Instant::now);
+        let mut last_nudge = Instant::now()
+            .checked_sub(debounce * 2)
+            .unwrap_or_else(Instant::now);
 
         loop {
             match rx.recv_timeout(Duration::from_secs(1)) {

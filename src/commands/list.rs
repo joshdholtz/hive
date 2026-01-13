@@ -16,11 +16,7 @@ pub fn run() -> Result<()> {
     println!();
 
     for ws in workspaces {
-        let status = if ws.is_running() {
-            " [running]"
-        } else {
-            ""
-        };
+        let status = if ws.is_running() { " [running]" } else { "" };
 
         let project_count = ws.config.projects.len();
         let total_workers = ws.config.total_workers();

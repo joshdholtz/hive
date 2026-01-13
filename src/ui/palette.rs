@@ -1,7 +1,7 @@
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
-use crate::app::palette::{filter_indices, build_items};
+use crate::app::palette::{build_items, filter_indices};
 use crate::app::state::App;
 
 pub fn render_palette(frame: &mut Frame, app: &App) {

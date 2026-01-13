@@ -15,7 +15,11 @@ pub fn render_pane(
     sidebar_focused: bool,
     scroll_buffer: Option<&OutputBuffer>,
 ) {
-    let border_color = if focused { Color::Yellow } else { Color::DarkGray };
+    let border_color = if focused {
+        Color::Yellow
+    } else {
+        Color::DarkGray
+    };
     let title_color = if focused { Color::Yellow } else { Color::Blue };
 
     let border_style = Style::default().fg(border_color);

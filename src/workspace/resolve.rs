@@ -101,7 +101,10 @@ pub fn find_workspace_for_path(path: &Path) -> Result<Option<WorkspaceMeta>> {
         // Fall back to checking individual project paths
         for project in &workspace.config.projects {
             let project_path = if project.path.exists() {
-                project.path.canonicalize().unwrap_or_else(|_| project.path.clone())
+                project
+                    .path
+                    .canonicalize()
+                    .unwrap_or_else(|_| project.path.clone())
             } else {
                 project.path.clone()
             };

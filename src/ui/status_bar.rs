@@ -37,11 +37,21 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &App, workers_per_p
 
     let mode = if app.scroll_mode {
         // Show scroll offset and history size for debugging
-        let offset = app.scroll_buffer.as_ref().map(|b| b.scroll_offset()).unwrap_or(0);
-        let history_size = app.panes.get(app.focused_pane)
+        let offset = app
+            .scroll_buffer
+            .as_ref()
+            .map(|b| b.scroll_offset())
+            .unwrap_or(0);
+        let history_size = app
+            .panes
+            .get(app.focused_pane)
             .map(|p| p.raw_history.len())
             .unwrap_or(0);
-        format!("SCROLL off:{} hist:{}KB [k=up j=down q=exit]", offset, history_size / 1024)
+        format!(
+            "SCROLL off:{} hist:{}KB [k=up j=down q=exit]",
+            offset,
+            history_size / 1024
+        )
     } else if app.show_palette {
         "PALETTE".to_string()
     } else if app.sidebar.focused {

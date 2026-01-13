@@ -48,7 +48,6 @@ pub fn get_workers_in_visual_order(app: &App) -> Vec<usize> {
     result
 }
 
-
 /// Calculate how many workers fit per page based on available area
 /// Layout is dynamic: columns based on width, rows based on height
 pub fn calculate_workers_per_page(area: Rect, has_architect: bool) -> usize {

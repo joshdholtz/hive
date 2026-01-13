@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use indexmap::IndexMap;
+use std::collections::HashMap;
 
 use crate::app::state::ClientPane;
 use crate::app::types::PaneType;
@@ -72,7 +72,10 @@ impl SidebarState {
                 continue;
             }
             if let Some(group) = &pane.group {
-                grouped.entry(group.clone()).or_default().push(pane.id.clone());
+                grouped
+                    .entry(group.clone())
+                    .or_default()
+                    .push(pane.id.clone());
             } else {
                 standalone.push(pane.id.clone());
             }
@@ -149,7 +152,11 @@ impl SidebarState {
             .iter()
             .position(|sel| sel == &self.selection)
             .unwrap_or(0);
-        let next = if idx == 0 { selections.len() - 1 } else { idx - 1 };
+        let next = if idx == 0 {
+            selections.len() - 1
+        } else {
+            idx - 1
+        };
         self.selection = selections[next].clone();
     }
 
@@ -175,9 +182,9 @@ impl SidebarState {
                 }
             }
             SidebarSelection::Group(group) => {
-                let any_hidden = panes.iter().any(|pane| {
-                    pane.group.as_deref() == Some(group.as_str()) && !pane.visible
-                });
+                let any_hidden = panes
+                    .iter()
+                    .any(|pane| pane.group.as_deref() == Some(group.as_str()) && !pane.visible);
                 let target = any_hidden;
                 let mut changes = Vec::new();
                 for pane in panes.iter_mut() {
@@ -240,7 +247,10 @@ impl SidebarState {
             if let Some(group) = &pane.group {
                 if !groups.contains(group) {
                     // Only include groups with 2+ members (single-member groups become standalone)
-                    let count = panes.iter().filter(|p| p.group.as_ref() == Some(group)).count();
+                    let count = panes
+                        .iter()
+                        .filter(|p| p.group.as_ref() == Some(group))
+                        .count();
                     if count >= 2 {
                         groups.push(group.clone());
                     }

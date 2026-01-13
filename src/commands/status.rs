@@ -18,7 +18,11 @@ pub fn run(start_dir: &Path) -> Result<()> {
 
     let project_dir = config::project_dir(&config_path);
     let socket_path = project_dir.join(".hive").join("hive.sock");
-    let status = if socket_path.exists() { "RUNNING" } else { "STOPPED" };
+    let status = if socket_path.exists() {
+        "RUNNING"
+    } else {
+        "STOPPED"
+    };
 
     println!("Session: {}", config.session);
     println!("Backend: {:?}", config.workers.backend);
@@ -51,7 +55,11 @@ pub fn run(start_dir: &Path) -> Result<()> {
 
 fn run_workspace_status(workspace: &crate::workspace::resolve::WorkspaceMeta) -> Result<()> {
     let socket_path = workspace.dir.join("hive.sock");
-    let status = if socket_path.exists() { "RUNNING" } else { "STOPPED" };
+    let status = if socket_path.exists() {
+        "RUNNING"
+    } else {
+        "STOPPED"
+    };
 
     println!("Workspace: {}", workspace.name);
     println!("Backend: {:?}", workspace.config.workers.backend);
@@ -63,7 +71,9 @@ fn run_workspace_status(workspace: &crate::workspace::resolve::WorkspaceMeta) ->
     println!("-------                         -------   -----");
 
     for project in &workspace.config.projects {
-        let name = project.path.file_name()
+        let name = project
+            .path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
         let lanes = project.lanes.join(", ");

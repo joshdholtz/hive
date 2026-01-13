@@ -23,11 +23,7 @@ pub fn render_sidebar(frame: &mut Frame, area: Rect, app: &App) {
                     expanded,
                 } => {
                     let icon = if *expanded { "v" } else { ">" };
-                    (
-                        format!("{} ", icon),
-                        format!("{} ({})", name, count),
-                        false,
-                    )
+                    (format!("{} ", icon), format!("{} ({})", name, count), false)
                 }
                 SidebarRowKind::Pane { pane_id, group: _ } => {
                     let pane = app.panes.iter().find(|pane| &pane.id == pane_id);

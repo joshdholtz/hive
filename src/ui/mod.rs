@@ -59,9 +59,10 @@ fn render_body(frame: &mut Frame, area: Rect, app: &App) -> usize {
 }
 
 fn render_panes(frame: &mut Frame, area: Rect, app: &App) -> usize {
-    let has_architect = app.panes.iter().any(|p| {
-        p.visible && matches!(p.pane_type, crate::app::types::PaneType::Architect)
-    });
+    let has_architect = app
+        .panes
+        .iter()
+        .any(|p| p.visible && matches!(p.pane_type, crate::app::types::PaneType::Architect));
     let workers_per_page = layout::calculate_workers_per_page(area, has_architect);
     let layout = layout::calculate_layout(app, area, workers_per_page);
     for (idx, rect) in layout {

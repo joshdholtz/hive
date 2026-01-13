@@ -1,6 +1,6 @@
 pub mod attach;
-pub mod detach;
 pub mod deinit;
+pub mod detach;
 pub mod doctor;
 pub mod layout;
 pub mod list;

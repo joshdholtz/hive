@@ -31,6 +31,7 @@ Hive is a native terminal multiplexer for orchestrating multiple Claude or Codex
 - **Scrollback** — Scroll through output with `Ctrl+U`/`Ctrl+D`
 - **Multi-Project Workspaces** — Manage multiple repos with a single hive
 - **Project Registry** — Quick-switch between projects
+- **Recursive workspace discovery** — `hive setup` now scans nested folders (3 levels deep, skipping common build dirs) so you can run it from a parent directory and still find all repos
 
 ---
 

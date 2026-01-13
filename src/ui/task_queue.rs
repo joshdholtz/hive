@@ -27,8 +27,8 @@ pub fn render_task_queue(frame: &mut Frame, app: &App) {
     let tasks_file = match load_tasks(&tasks_path) {
         Ok(t) => t,
         Err(_) => {
-            let error_msg = Paragraph::new("Failed to load tasks.yaml")
-                .style(Style::default().fg(Color::Red));
+            let error_msg =
+                Paragraph::new("Failed to load tasks.yaml").style(Style::default().fg(Color::Red));
             frame.render_widget(error_msg, inner);
             return;
         }
@@ -38,8 +38,8 @@ pub fn render_task_queue(frame: &mut Frame, app: &App) {
     let lanes = collect_lanes(&tasks_file);
 
     if lanes.is_empty() {
-        let empty_msg = Paragraph::new("No tasks found")
-            .style(Style::default().fg(Color::DarkGray));
+        let empty_msg =
+            Paragraph::new("No tasks found").style(Style::default().fg(Color::DarkGray));
         frame.render_widget(empty_msg, inner);
         return;
     }
@@ -61,9 +61,13 @@ pub fn render_task_queue(frame: &mut Frame, app: &App) {
             arrow, lane.name, backlog_count, in_progress_count, done_count
         );
         let header_style = if line_idx == app.task_queue_selection {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
         };
         items.push(ListItem::new(Line::from(header).style(header_style)));
         line_idx += 1;
@@ -158,8 +162,9 @@ pub fn render_task_queue(frame: &mut Frame, app: &App) {
     frame.render_widget(list, chunks[0]);
 
     // Help text at bottom
-    let help = Paragraph::new("[q/Esc] Close  [↑↓/jk] Navigate  [Space] Toggle  [Enter] Jump to lane")
-        .style(Style::default().fg(Color::DarkGray));
+    let help =
+        Paragraph::new("[q/Esc] Close  [↑↓/jk] Navigate  [Space] Toggle  [Enter] Jump to lane")
+            .style(Style::default().fg(Color::DarkGray));
     frame.render_widget(help, chunks[1]);
 }
 

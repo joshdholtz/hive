@@ -41,7 +41,10 @@ pub fn run(start_dir: &Path) -> Result<()> {
                 .join(&worker.id)
                 .join("WORKER.md");
             if !worker_file.exists() {
-                issues.push(format!("Missing worker role file: {}", worker_file.display()));
+                issues.push(format!(
+                    "Missing worker role file: {}",
+                    worker_file.display()
+                ));
                 missing_role = true;
             }
         }
@@ -105,7 +108,10 @@ fn create_tasks_file(config: &crate::config::HiveConfig, path: &Path) -> Result<
     for window in &config.windows {
         for worker in &window.workers {
             let lane = worker.lane.clone().unwrap_or_else(|| worker.id.clone());
-            tasks.projects.entry(lane).or_insert_with(|| ProjectEntry::Direct(LaneTasks::default()));
+            tasks
+                .projects
+                .entry(lane)
+                .or_insert_with(|| ProjectEntry::Direct(LaneTasks::default()));
         }
     }
 
@@ -113,7 +119,6 @@ fn create_tasks_file(config: &crate::config::HiveConfig, path: &Path) -> Result<
         std::fs::create_dir_all(parent)?;
     }
     let content = serde_yaml::to_string(&tasks)?;
-    std::fs::write(path, content)
-        .with_context(|| format!("Failed writing {}", path.display()))?;
+    std::fs::write(path, content).with_context(|| format!("Failed writing {}", path.display()))?;
     Ok(())
 }

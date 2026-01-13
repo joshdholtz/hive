@@ -134,15 +134,25 @@ android-sdk:
         let tasks: TasksFile = serde_yaml::from_str(yaml).unwrap();
 
         // Check what type android-sdk was parsed as
-        let entry = tasks.projects.get("android-sdk").expect("android-sdk should exist");
+        let entry = tasks
+            .projects
+            .get("android-sdk")
+            .expect("android-sdk should exist");
         match entry {
             ProjectEntry::Direct(lt) => {
-                println!("Parsed as Direct: backlog={} done={}", lt.backlog.len(), lt.done.len());
+                println!(
+                    "Parsed as Direct: backlog={} done={}",
+                    lt.backlog.len(),
+                    lt.done.len()
+                );
                 assert_eq!(lt.backlog.len(), 1, "backlog should have 1 task");
                 assert_eq!(lt.done.len(), 2, "done should have 2 tasks");
             }
             ProjectEntry::Nested(lanes) => {
-                println!("Parsed as Nested with lanes: {:?}", lanes.keys().collect::<Vec<_>>());
+                println!(
+                    "Parsed as Nested with lanes: {:?}",
+                    lanes.keys().collect::<Vec<_>>()
+                );
                 panic!("Should be parsed as Direct, not Nested");
             }
         }
@@ -182,7 +192,10 @@ android-sdk:
         let backend = tasks.projects.get("backend").expect("backend should exist");
         match backend {
             ProjectEntry::Nested(lanes) => {
-                println!("backend -> Nested with lanes: {:?}", lanes.keys().collect::<Vec<_>>());
+                println!(
+                    "backend -> Nested with lanes: {:?}",
+                    lanes.keys().collect::<Vec<_>>()
+                );
                 let fixes = lanes.get("fixes").unwrap();
                 assert_eq!(fixes.backlog.len(), 1, "fixes backlog should have 1 task");
             }
@@ -190,15 +203,25 @@ android-sdk:
         }
 
         // Check android-sdk (should be Direct)
-        let android = tasks.projects.get("android-sdk").expect("android-sdk should exist");
+        let android = tasks
+            .projects
+            .get("android-sdk")
+            .expect("android-sdk should exist");
         match android {
             ProjectEntry::Direct(lt) => {
-                println!("android-sdk -> Direct: backlog={} done={}", lt.backlog.len(), lt.done.len());
+                println!(
+                    "android-sdk -> Direct: backlog={} done={}",
+                    lt.backlog.len(),
+                    lt.done.len()
+                );
                 assert_eq!(lt.backlog.len(), 1, "android backlog should have 1 task");
                 assert_eq!(lt.done.len(), 2, "android done should have 2 tasks");
             }
             ProjectEntry::Nested(lanes) => {
-                println!("android-sdk -> WRONGLY Nested with lanes: {:?}", lanes.keys().collect::<Vec<_>>());
+                println!(
+                    "android-sdk -> WRONGLY Nested with lanes: {:?}",
+                    lanes.keys().collect::<Vec<_>>()
+                );
                 panic!("android-sdk should be Direct, not Nested");
             }
         }

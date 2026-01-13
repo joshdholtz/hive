@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 use crate::app::sidebar::SidebarState;
 use crate::app::types::PaneType;
 use crate::config::{Backend, BranchConfig};
-use crate::pty::output::OutputBuffer;
 use crate::ipc::{AppState, PaneInfo, WindowInfo};
 use crate::projects::ProjectEntry;
+use crate::pty::output::OutputBuffer;
 use crate::tasks::TaskCounts;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -207,7 +207,11 @@ impl App {
             .iter()
             .position(|idx| *idx == self.focused_pane)
             .unwrap_or(0);
-        let prev = if current == 0 { visible.len() - 1 } else { current - 1 };
+        let prev = if current == 0 {
+            visible.len() - 1
+        } else {
+            current - 1
+        };
         self.focused_pane = visible[prev];
     }
 
@@ -231,11 +235,7 @@ impl App {
         self.task_counts = state.task_counts;
         self.architect_left = state.architect_left;
 
-        self.windows = state
-            .windows
-            .into_iter()
-            .map(window_info_to_app)
-            .collect();
+        self.windows = state.windows.into_iter().map(window_info_to_app).collect();
 
         let mut existing_buffers = std::collections::HashMap::new();
         for pane in self.panes.drain(..) {
@@ -263,12 +263,7 @@ impl App {
         if self.panes.get(self.focused_pane).map(|pane| pane.visible) == Some(true) {
             return;
         }
-        if let Some((idx, _)) = self
-            .panes
-            .iter()
-            .enumerate()
-            .find(|(_, pane)| pane.visible)
-        {
+        if let Some((idx, _)) = self.panes.iter().enumerate().find(|(_, pane)| pane.visible) {
             self.focused_pane = idx;
         }
     }
@@ -287,9 +282,12 @@ fn pane_info_to_client(
     pane: PaneInfo,
     buffers: &mut std::collections::HashMap<String, (OutputBuffer, std::collections::VecDeque<u8>)>,
 ) -> ClientPane {
-    let (output_buffer, raw_history) = buffers
-        .remove(&pane.id)
-        .unwrap_or_else(|| (OutputBuffer::new(24, 80, 2000), std::collections::VecDeque::new()));
+    let (output_buffer, raw_history) = buffers.remove(&pane.id).unwrap_or_else(|| {
+        (
+            OutputBuffer::new(24, 80, 2000),
+            std::collections::VecDeque::new(),
+        )
+    });
 
     ClientPane {
         id: pane.id,

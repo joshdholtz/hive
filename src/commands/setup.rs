@@ -11,8 +11,10 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 
 use crate::config::{ArchitectConfig, Backend, WorkersConfig};
 use crate::tasks::yaml::{LaneTasks, TasksFile, WorkerProtocol};
-use crate::workspace::{create_worktrees_with_symlinks, slug_from_path, WorkspaceConfig, WorkspaceProject};
 use crate::workspace::resolve::{create_workspace_dir, find_workspace_for_path};
+use crate::workspace::{
+    create_worktrees_with_symlinks, slug_from_path, WorkspaceConfig, WorkspaceProject,
+};
 
 /// Run the workspace setup wizard
 pub fn run(start_dir: &Path) -> Result<PathBuf> {
@@ -35,10 +37,10 @@ pub fn run(start_dir: &Path) -> Result<PathBuf> {
 enum Step {
     Welcome,
     ScanProjects,
-    SelectProjects,   // Select projects AND worker count per project
-    NameLanes,        // Name lanes only for projects with 2+ workers
+    SelectProjects, // Select projects AND worker count per project
+    NameLanes,      // Name lanes only for projects with 2+ workers
     Backends,
-    SymlinkFiles,     // Select files to symlink to worktrees
+    SymlinkFiles, // Select files to symlink to worktrees
     Confirm,
     Creating,
     Done,
@@ -135,7 +137,13 @@ impl SetupState {
     /// Scan selected projects for files that should be symlinked
     fn scan_symlink_candidates(&mut self) {
         let mut candidates = std::collections::HashSet::new();
-        let patterns = [".env", ".env.local", ".env.development", ".env.production", ".env.test"];
+        let patterns = [
+            ".env",
+            ".env.local",
+            ".env.development",
+            ".env.production",
+            ".env.test",
+        ];
 
         for project in self.discovered_projects.iter().filter(|p| p.selected) {
             for pattern in &patterns {
@@ -148,7 +156,10 @@ impl SetupState {
 
         self.symlink_candidates = candidates
             .into_iter()
-            .map(|path| SymlinkCandidate { path, selected: true }) // Default selected
+            .map(|path| SymlinkCandidate {
+                path,
+                selected: true,
+            }) // Default selected
             .collect();
         self.symlink_candidates.sort_by(|a, b| a.path.cmp(&b.path));
     }
@@ -162,7 +173,10 @@ impl SetupState {
     }
 
     fn selected_projects(&self) -> Vec<&DiscoveredProject> {
-        self.discovered_projects.iter().filter(|p| p.selected).collect()
+        self.discovered_projects
+            .iter()
+            .filter(|p| p.selected)
+            .collect()
     }
 
     fn projects_needing_lanes_count(&self) -> usize {
@@ -342,7 +356,10 @@ fn handle_setup_key(state: &mut SetupState, key: KeyEvent, start_dir: &Path) -> 
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                let lane_count = state.current_lane_project().map(|p| p.lanes.len()).unwrap_or(0);
+                let lane_count = state
+                    .current_lane_project()
+                    .map(|p| p.lanes.len())
+                    .unwrap_or(0);
                 if state.lane_cursor < lane_count.saturating_sub(1) {
                     state.lane_cursor += 1;
                 }
@@ -405,7 +422,8 @@ fn handle_setup_key(state: &mut SetupState, key: KeyEvent, start_dir: &Path) -> 
             }
             KeyCode::Down => {
                 if !state.symlink_candidates.is_empty() {
-                    state.symlink_cursor = (state.symlink_cursor + 1).min(state.symlink_candidates.len() - 1);
+                    state.symlink_cursor =
+                        (state.symlink_cursor + 1).min(state.symlink_candidates.len() - 1);
                 }
             }
             KeyCode::Char(' ') => {
@@ -415,7 +433,8 @@ fn handle_setup_key(state: &mut SetupState, key: KeyEvent, start_dir: &Path) -> 
             }
             KeyCode::Enter => {
                 // Collect selected files
-                state.symlink_files = state.symlink_candidates
+                state.symlink_files = state
+                    .symlink_candidates
                     .iter()
                     .filter(|c| c.selected)
                     .map(|c| c.path.clone())
@@ -447,7 +466,8 @@ fn handle_setup_key(state: &mut SetupState, key: KeyEvent, start_dir: &Path) -> 
 
         Step::Done => {
             if key.code == KeyCode::Enter {
-                let workspace_dir = crate::workspace::resolve::workspace_dir(&state.workspace_name)?;
+                let workspace_dir =
+                    crate::workspace::resolve::workspace_dir(&state.workspace_name)?;
                 return Ok(KeyResult::Done(workspace_dir));
             }
         }
@@ -489,12 +509,68 @@ fn handle_lane_editing(state: &mut SetupState, key: KeyEvent) -> Result<KeyResul
     Ok(KeyResult::Continue)
 }
 
-/// Scan a directory for git repositories (up to 2 levels deep)
+/// Scan a directory for git repositories (recursively, up to a few levels deep)
 fn scan_for_projects(dir: &Path) -> Vec<DiscoveredProject> {
-    let mut projects = Vec::new();
+    const MAX_SCAN_DEPTH: usize = 3;
+    const SKIP_DIRS: &[&str] = &["node_modules", "target", "venv", ".hive"];
 
-    // Check if current directory is a git repo
-    if dir.join(".git").exists() {
+    fn is_hidden(path: &Path) -> bool {
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            name.starts_with('.')
+        } else {
+            false
+        }
+    }
+
+    fn is_git_repo(path: &Path) -> bool {
+        path.join(".git").exists()
+    }
+
+    fn should_skip(path: &Path) -> bool {
+        if is_hidden(path) {
+            return true;
+        }
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            SKIP_DIRS.contains(&name)
+        } else {
+            false
+        }
+    }
+
+    fn collect_projects(path: &Path, depth: usize, projects: &mut Vec<DiscoveredProject>) {
+        if is_git_repo(path) {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("project")
+                .to_string();
+            let mut project = DiscoveredProject::new(name, path.to_path_buf());
+            project.selected = true;
+            projects.push(project);
+            return;
+        }
+
+        if depth >= MAX_SCAN_DEPTH {
+            return;
+        }
+
+        if let Ok(entries) = std::fs::read_dir(path) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let sub_path = entry.path();
+                if !sub_path.is_dir() || should_skip(&sub_path) {
+                    continue;
+                }
+
+                collect_projects(&sub_path, depth + 1, projects);
+            }
+        }
+    }
+
+    let mut projects = Vec::new();
+    collect_projects(dir, 0, &mut projects);
+
+    if projects.is_empty() {
+        // No repositories found, default to current directory (matching previous behavior)
         let name = dir
             .file_name()
             .and_then(|n| n.to_str())
@@ -503,58 +579,10 @@ fn scan_for_projects(dir: &Path) -> Vec<DiscoveredProject> {
         let mut project = DiscoveredProject::new(name, dir.to_path_buf());
         project.selected = true;
         projects.push(project);
-        return projects;
+    } else {
+        projects.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     }
 
-    // Scan subdirectories
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.filter_map(|e| e.ok()) {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-
-            // Skip hidden directories
-            if path.file_name().and_then(|n| n.to_str()).map(|n| n.starts_with('.')).unwrap_or(false) {
-                continue;
-            }
-
-            // Check if this is a git repo
-            if path.join(".git").exists() {
-                let name = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("project")
-                    .to_string();
-                projects.push(DiscoveredProject::new(name, path.clone()));
-            } else {
-                // Check one level deeper
-                if let Ok(sub_entries) = std::fs::read_dir(&path) {
-                    for sub_entry in sub_entries.filter_map(|e| e.ok()) {
-                        let sub_path = sub_entry.path();
-                        if !sub_path.is_dir() {
-                            continue;
-                        }
-
-                        if sub_path.file_name().and_then(|n| n.to_str()).map(|n| n.starts_with('.')).unwrap_or(false) {
-                            continue;
-                        }
-
-                        if sub_path.join(".git").exists() {
-                            let name = sub_path
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or("project")
-                                .to_string();
-                            projects.push(DiscoveredProject::new(name, sub_path));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    projects.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     projects
 }
 
@@ -633,10 +661,14 @@ fn write_tasks(workspace_dir: &Path, config: &WorkspaceConfig) -> Result<()> {
             for lane in &project.lanes {
                 lanes.insert(lane.clone(), LaneTasks::default());
             }
-            tasks.projects.insert(project_slug, ProjectEntry::Nested(lanes));
+            tasks
+                .projects
+                .insert(project_slug, ProjectEntry::Nested(lanes));
         } else if let Some(lane) = project.lanes.first() {
             // Single-lane project: direct structure (use lane name as key)
-            tasks.projects.insert(lane.clone(), ProjectEntry::Direct(LaneTasks::default()));
+            tasks
+                .projects
+                .insert(lane.clone(), ProjectEntry::Direct(LaneTasks::default()));
         }
     }
 
@@ -651,11 +683,17 @@ fn write_tasks(workspace_dir: &Path, config: &WorkspaceConfig) -> Result<()> {
 fn write_architect_role(workspace_dir: &Path, config: &WorkspaceConfig) -> Result<()> {
     let mut content = String::new();
     content.push_str("# Architect Role\n\n");
-    content.push_str("You are the architect for this workspace. You plan tasks but do NOT write code.\n\n");
+    content.push_str(
+        "You are the architect for this workspace. You plan tasks but do NOT write code.\n\n",
+    );
     content.push_str("## Projects in this workspace\n\n");
 
     for project in &config.projects {
-        let project_name = project.path.file_name().and_then(|n| n.to_str()).unwrap_or("project");
+        let project_name = project
+            .path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("project");
         content.push_str(&format!(
             "- **{}** - {}\n",
             project_name,
@@ -669,14 +707,18 @@ fn write_architect_role(workspace_dir: &Path, config: &WorkspaceConfig) -> Resul
         "Tasks are stored in: {}/tasks.yaml\n\n",
         workspace_dir.display()
     ));
-    content.push_str("Add tasks to the appropriate lane's backlog. Workers will claim and complete them.\n\n");
+    content.push_str(
+        "Add tasks to the appropriate lane's backlog. Workers will claim and complete them.\n\n",
+    );
 
     content.push_str("### Task Format\n\n");
     content.push_str("```yaml\n<lane-name>:\n  backlog:\n    - id: my-task-id\n      title: Short title for the task\n      description: |\n        Detailed description of what needs to be done.\n      priority: high\n```\n\n");
 
     content.push_str("### YAML Validation (CRITICAL)\n\n");
     content.push_str("When editing tasks.yaml, you MUST ensure valid YAML:\n");
-    content.push_str("- Empty lists MUST use `[]`, never leave blank (e.g., `backlog: []` not `backlog:`)\n");
+    content.push_str(
+        "- Empty lists MUST use `[]`, never leave blank (e.g., `backlog: []` not `backlog:`)\n",
+    );
     content.push_str(&format!(
         "- After editing, validate with: `yq eval '.' {}/tasks.yaml > /dev/null && echo 'Valid' || echo 'Invalid'`\n",
         workspace_dir.display()
@@ -696,7 +738,11 @@ fn write_lane_roles(workspace_dir: &Path, config: &WorkspaceConfig) -> Result<()
 
     for project in &config.projects {
         let project_slug = slug_from_path(&project.path);
-        let project_name = project.path.file_name().and_then(|n| n.to_str()).unwrap_or("project");
+        let project_name = project
+            .path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("project");
 
         for lane in &project.lanes {
             let lane_dir = lanes_dir.join(lane);
@@ -708,13 +754,23 @@ fn write_lane_roles(workspace_dir: &Path, config: &WorkspaceConfig) -> Result<()
 
             let mut content = String::new();
             content.push_str(&format!("# Worker Role: Lane {}\n\n", lane));
-            content.push_str(&format!("You are a worker assigned to the **{}** lane.\n\n", lane));
+            content.push_str(&format!(
+                "You are a worker assigned to the **{}** lane.\n\n",
+                lane
+            ));
 
             content.push_str("## Your Project\n\n");
-            content.push_str(&format!("- {} ({})\n\n", project_name, project.path.display()));
+            content.push_str(&format!(
+                "- {} ({})\n\n",
+                project_name,
+                project.path.display()
+            ));
 
             content.push_str("## Branch Naming Convention\n\n");
-            content.push_str(&format!("- Create local branches with prefix: `{}/`\n", local_prefix));
+            content.push_str(&format!(
+                "- Create local branches with prefix: `{}/`\n",
+                local_prefix
+            ));
             content.push_str(&format!("- Example: `{}/my-feature`\n", local_prefix));
             content.push_str(&format!(
                 "- Push command: `git push origin {}/my-feature:{}/my-feature`\n\n",
@@ -738,7 +794,10 @@ fn write_lane_roles(workspace_dir: &Path, config: &WorkspaceConfig) -> Result<()
 
             content.push_str("## Creating a Pull Request (REQUIRED)\n\n");
             content.push_str("After completing a task, you MUST follow these steps:\n");
-            content.push_str(&format!("1. Create a branch: `git checkout -b {}/task-name`\n", local_prefix));
+            content.push_str(&format!(
+                "1. Create a branch: `git checkout -b {}/task-name`\n",
+                local_prefix
+            ));
             content.push_str("2. Stage changes: `git add -A`\n");
             content.push_str("3. Commit: `git commit -m \"description of changes\"`\n");
             content.push_str(&format!(
@@ -750,7 +809,10 @@ fn write_lane_roles(workspace_dir: &Path, config: &WorkspaceConfig) -> Result<()
 
             content.push_str("## When Backlog is Empty\n\n");
             content.push_str("If your lane's backlog is empty, **STOP IMMEDIATELY**.\n");
-            content.push_str(&format!("- Report \"No tasks in backlog for lane {}\"\n", lane));
+            content.push_str(&format!(
+                "- Report \"No tasks in backlog for lane {}\"\n",
+                lane
+            ));
             content.push_str("- Do NOT look for other work\n");
             content.push_str("- Do NOT explore the codebase\n");
             content.push_str("- Simply wait for the architect to add tasks\n\n");
@@ -841,10 +903,7 @@ fn render_setup(frame: &mut ratatui::Frame, state: &SetupState) {
                 };
                 lines.push(format!(
                     "{} {} {}{}",
-                    cursor,
-                    selected,
-                    project.name,
-                    workers_display
+                    cursor, selected, project.name, workers_display
                 ));
             }
 
@@ -865,9 +924,15 @@ fn render_setup(frame: &mut ratatui::Frame, state: &SetupState) {
 
             if let Some(project) = state.current_lane_project() {
                 let mut lines = vec![
-                    format!("Name lanes for: {}                         [{} of {}]", project.name, current_idx, total),
+                    format!(
+                        "Name lanes for: {}                         [{} of {}]",
+                        project.name, current_idx, total
+                    ),
                     "".to_string(),
-                    format!("This project has {} workers. Name each lane:", project.workers),
+                    format!(
+                        "This project has {} workers. Name each lane:",
+                        project.workers
+                    ),
                     "".to_string(),
                 ];
 
@@ -898,12 +963,20 @@ fn render_setup(frame: &mut ratatui::Frame, state: &SetupState) {
                 "".to_string(),
                 format!(
                     "{} Architect backend: {:?}",
-                    if state.backend_selection == 0 { ">" } else { " " },
+                    if state.backend_selection == 0 {
+                        ">"
+                    } else {
+                        " "
+                    },
                     state.architect_backend
                 ),
                 format!(
                     "{} Workers backend: {:?}",
-                    if state.backend_selection == 1 { ">" } else { " " },
+                    if state.backend_selection == 1 {
+                        ">"
+                    } else {
+                        " "
+                    },
                     state.workers_backend
                 ),
                 "".to_string(),
@@ -949,7 +1022,8 @@ fn render_setup(frame: &mut ratatui::Frame, state: &SetupState) {
                 if project.workers == 1 {
                     lines.push(format!("  {} (1 worker)", project.name));
                 } else {
-                    lines.push(format!("  {} ({} workers: {})",
+                    lines.push(format!(
+                        "  {} ({} workers: {})",
                         project.name,
                         project.workers,
                         project.lanes.join(", ")
@@ -1003,7 +1077,11 @@ fn render_setup(frame: &mut ratatui::Frame, state: &SetupState) {
     frame.render_widget(paragraph, inner);
 }
 
-fn centered_rect(percent_x: u16, percent_y: u16, r: ratatui::layout::Rect) -> ratatui::layout::Rect {
+fn centered_rect(
+    percent_x: u16,
+    percent_y: u16,
+    r: ratatui::layout::Rect,
+) -> ratatui::layout::Rect {
     use ratatui::layout::{Constraint, Direction, Layout};
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)

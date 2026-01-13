@@ -1,7 +1,7 @@
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -14,8 +14,8 @@ use crossterm::{
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::{backend::CrosstermBackend, Terminal};
 
-use crate::app::{key_to_bytes, layout_visible_panes};
 use crate::app::state::{App, AppWindow, ClientPane};
+use crate::app::{key_to_bytes, layout_visible_panes};
 use crate::config;
 use crate::ipc::{decode_server_message, ClientMessage, PaneSize, ServerMessage};
 use crate::projects;
@@ -147,9 +147,8 @@ impl ClientConn {
     }
 
     fn reconnect(&mut self) -> Result<()> {
-        let stream = UnixStream::connect(&self.socket_path).with_context(|| {
-            format!("Failed to reconnect to {}", self.socket_path.display())
-        })?;
+        let stream = UnixStream::connect(&self.socket_path)
+            .with_context(|| format!("Failed to reconnect to {}", self.socket_path.display()))?;
         stream.set_nonblocking(true)?;
         self.stream = stream;
         self.read_buf.clear();
@@ -158,7 +157,11 @@ impl ClientConn {
 }
 
 fn log_line(path: &std::path::Path, line: &str) {
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
         let _ = writeln!(file, "{}", line);
     }
 }
@@ -195,7 +198,11 @@ fn run_tui(
         let rect = Rect::new(0, 0, width, height);
         let body = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(0), Constraint::Length(1)])
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Min(0),
+                Constraint::Length(1),
+            ])
             .split(rect)[1];
         let pane_area = if app.sidebar.visible {
             Layout::default()
@@ -206,10 +213,12 @@ fn run_tui(
             body
         };
 
-        let has_architect = app.panes.iter().any(|p| {
-            p.visible && matches!(p.pane_type, crate::app::types::PaneType::Architect)
-        });
-        let workers_per_page = crate::ui::layout::calculate_workers_per_page(pane_area, has_architect);
+        let has_architect = app
+            .panes
+            .iter()
+            .any(|p| p.visible && matches!(p.pane_type, crate::app::types::PaneType::Architect));
+        let workers_per_page =
+            crate::ui::layout::calculate_workers_per_page(pane_area, has_architect);
 
         // Clamp page if terminal resized
         app.clamp_worker_page(workers_per_page);
@@ -236,7 +245,9 @@ fn run_tui(
                         pane.output_buffer.resize(rows, cols);
                     }
                 }
-                conn.send(ClientMessage::Resize { panes: sizes.clone() })?;
+                conn.send(ClientMessage::Resize {
+                    panes: sizes.clone(),
+                })?;
                 last_sizes = sizes;
             }
         }
@@ -250,7 +261,8 @@ fn run_tui(
                     // Immediately resize buffers to current terminal size before processing output
                     // This prevents replay from being processed at wrong size (24x80 default)
                     if !app.panes.is_empty() {
-                        let layout = crate::ui::layout::calculate_layout(app, pane_area, workers_per_page);
+                        let layout =
+                            crate::ui::layout::calculate_layout(app, pane_area, workers_per_page);
                         for (idx, rect) in &layout {
                             let rows = rect.height.saturating_sub(2).max(min_pty_rows);
                             let cols = rect.width.saturating_sub(2).max(min_pty_cols);
@@ -285,7 +297,10 @@ fn run_tui(
                             pane.raw_history.pop_front();
                         }
                     } else {
-                        pending_output.entry(pane_id).or_default().extend_from_slice(&data);
+                        pending_output
+                            .entry(pane_id)
+                            .or_default()
+                            .extend_from_slice(&data);
                     }
                 }
                 ServerMessage::PaneExited { pane_id } => {
@@ -338,7 +353,13 @@ fn run_tui(
     Ok(())
 }
 
-fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent, workers_per_page: usize, pane_area: Rect) -> Result<bool> {
+fn handle_key_event(
+    app: &mut App,
+    conn: &mut ClientConn,
+    key: KeyEvent,
+    workers_per_page: usize,
+    pane_area: Rect,
+) -> Result<bool> {
     if app.show_help {
         if matches!(key.code, KeyCode::Esc | KeyCode::Char('?')) {
             app.show_help = false;
@@ -388,15 +409,21 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent, workers
                 if let Some(item_idx) = filtered.get(app.palette_selection) {
                     if let Some(item) = items.get(*item_idx) {
                         match item.action.clone() {
-                            crate::app::palette::PaletteAction::FocusNext => app.focus_next(&visible),
-                            crate::app::palette::PaletteAction::FocusPrev => app.focus_prev(&visible),
+                            crate::app::palette::PaletteAction::FocusNext => {
+                                app.focus_next(&visible)
+                            }
+                            crate::app::palette::PaletteAction::FocusPrev => {
+                                app.focus_prev(&visible)
+                            }
                             crate::app::palette::PaletteAction::FocusPane(idx) => {
                                 app.focused_pane = idx
                             }
                             crate::app::palette::PaletteAction::ToggleZoom => app.toggle_zoom(),
                             crate::app::palette::PaletteAction::ToggleArchitectPosition => {
                                 app.toggle_architect_position();
-                                conn.send(ClientMessage::SetArchitectLeft { left: app.architect_left })?;
+                                conn.send(ClientMessage::SetArchitectLeft {
+                                    left: app.architect_left,
+                                })?;
                             }
                             crate::app::palette::PaletteAction::ToggleSidebar => {
                                 app.sidebar.visible = !app.sidebar.visible;
@@ -442,21 +469,29 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent, workers
                 }
                 app.show_palette = false;
             }
-            KeyCode::Char(c) if c >= '1' && c <= '9' && !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char(c)
+                if c >= '1' && c <= '9' && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
                 // Number shortcuts: 1-9 select items directly
                 let idx = (c as usize) - ('1' as usize);
                 if let Some(item_idx) = filtered.get(idx) {
                     if let Some(item) = items.get(*item_idx) {
                         match item.action.clone() {
-                            crate::app::palette::PaletteAction::FocusNext => app.focus_next(&visible),
-                            crate::app::palette::PaletteAction::FocusPrev => app.focus_prev(&visible),
+                            crate::app::palette::PaletteAction::FocusNext => {
+                                app.focus_next(&visible)
+                            }
+                            crate::app::palette::PaletteAction::FocusPrev => {
+                                app.focus_prev(&visible)
+                            }
                             crate::app::palette::PaletteAction::FocusPane(pane_idx) => {
                                 app.focused_pane = pane_idx
                             }
                             crate::app::palette::PaletteAction::ToggleZoom => app.toggle_zoom(),
                             crate::app::palette::PaletteAction::ToggleArchitectPosition => {
                                 app.toggle_architect_position();
-                                conn.send(ClientMessage::SetArchitectLeft { left: app.architect_left })?;
+                                conn.send(ClientMessage::SetArchitectLeft {
+                                    left: app.architect_left,
+                                })?;
                             }
                             crate::app::palette::PaletteAction::ToggleSidebar => {
                                 app.sidebar.visible = !app.sidebar.visible;
@@ -514,7 +549,8 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent, workers
         return Ok(false);
     }
 
-    if app.sidebar.focused && app.sidebar.visible && !key.modifiers.contains(KeyModifiers::CONTROL) {
+    if app.sidebar.focused && app.sidebar.visible && !key.modifiers.contains(KeyModifiers::CONTROL)
+    {
         match key.code {
             KeyCode::Esc => {
                 app.sidebar.focused = false;
@@ -610,9 +646,10 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent, workers
 
     // Calculate layout for grid navigation
     let layout = crate::ui::layout::calculate_layout(app, pane_area, workers_per_page);
-    let has_architect = app.panes.iter().any(|p| {
-        p.visible && matches!(p.pane_type, crate::app::types::PaneType::Architect)
-    });
+    let has_architect = app
+        .panes
+        .iter()
+        .any(|p| p.visible && matches!(p.pane_type, crate::app::types::PaneType::Architect));
 
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('h') {
         // Move left in grid
@@ -652,7 +689,9 @@ fn handle_key_event(app: &mut App, conn: &mut ClientConn, key: KeyEvent, workers
         // Toggle task queue view
         app.show_task_queue = !app.show_task_queue;
         app.task_queue_selection = 0;
-    } else if key.code == KeyCode::Esc || (key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('[')) {
+    } else if key.code == KeyCode::Esc
+        || (key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('['))
+    {
         // Enter scroll mode (like tmux copy mode) - ESC or Ctrl+[
         // Note: Ctrl+[ sends ESC in terminals, so we check for both
         if app.scroll_mode {
@@ -740,8 +779,7 @@ fn handle_projects_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                     match projects::add_project(&path, None) {
                         Ok(projects_file) => {
                             app.projects = projects_file.projects;
-                            app.projects_message =
-                                Some(format!("Added {}", path.display()));
+                            app.projects_message = Some(format!("Added {}", path.display()));
                         }
                         Err(err) => {
                             app.projects_message = Some(format!("Failed: {}", err));
@@ -842,9 +880,12 @@ fn handle_task_queue_key(app: &mut App, key: KeyEvent) -> Result<bool> {
             // Jump to lane's worker pane if on a lane header
             if let Some(lane) = crate::ui::task_queue::get_selected_lane(app) {
                 // Find the pane with this lane
-                if let Some((idx, _)) = app.panes.iter().enumerate().find(|(_, p)| {
-                    p.lane.as_deref() == Some(&lane)
-                }) {
+                if let Some((idx, _)) = app
+                    .panes
+                    .iter()
+                    .enumerate()
+                    .find(|(_, p)| p.lane.as_deref() == Some(&lane))
+                {
                     app.focused_pane = idx;
                     app.show_task_queue = false;
                 }
