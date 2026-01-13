@@ -31,7 +31,7 @@ Hive is a native terminal multiplexer for orchestrating multiple Claude or Codex
 - **Scrollback** — Scroll through output with `Ctrl+U`/`Ctrl+D`
 - **Multi-Project Workspaces** — Manage multiple repos with a single hive
 - **Project Registry** — Quick-switch between projects
-- **Recursive workspace discovery** — `hive setup` now scans nested folders (3 levels deep, skipping common build dirs) so you can run it from a parent directory and still find all repos
+- **Recursive workspace discovery** — Setup wizard scans nested folders (3 levels deep, skipping common build dirs) so you can run it from a parent directory and still find all repos
 
 ---
 
@@ -41,14 +41,8 @@ Hive is a native terminal multiplexer for orchestrating multiple Claude or Codex
 # Install (requires Rust)
 cargo install --git https://github.com/joshdholtz/hive
 
-# Set up a single project
+# Start the swarm (runs setup wizard on first run)
 cd your-project
-hive init
-
-# Or set up a multi-project workspace
-hive setup              # Interactive wizard
-
-# Start the swarm
 hive up
 
 # Attach to the TUI (if detached)
@@ -61,13 +55,12 @@ hive attach
 
 | Command | Description |
 |---------|-------------|
-| `hive init` | Initialize a single project with `.hive.yaml` |
-| `hive setup` | Interactive workspace wizard for multi-project setups |
-| `hive up` | Start the hive (architect + workers) |
+| `hive up` | Start the hive (runs setup wizard if no config exists) |
 | `hive attach` | Attach to a running hive's TUI |
 | `hive stop` | Stop the hive server |
 | `hive status` | Show worker status and task counts |
 | `hive nudge [worker]` | Nudge workers to check for tasks |
+| `hive role [worker]` | Regenerate worker role files |
 | `hive list` | List registered projects |
 | `hive open [project]` | Open a project from the registry |
 | `hive doctor` | Check and fix common issues |
@@ -186,7 +179,7 @@ workers:
   backend: claude
 ```
 
-Run `hive setup` to create this interactively.
+Run `hive up` to create this interactively via the setup wizard.
 
 ### Task File Structure
 
@@ -290,7 +283,7 @@ my-project/
 │   └── tests/            # Worktree for Tests worker
 ```
 
-The `hive setup` wizard handles this automatically.
+The setup wizard (triggered by `hive up`) handles this automatically.
 
 ---
 
