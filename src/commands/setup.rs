@@ -605,6 +605,7 @@ fn create_workspace(state: &SetupState) -> Result<PathBuf> {
             symlink: state.symlink_files.clone(),
         },
         layout: crate::workspace::config::LayoutConfig::default(),
+        workflow: crate::config::WorkflowConfig::default(),
     };
 
     // Add selected projects with their lanes
@@ -724,7 +725,16 @@ fn write_architect_role(workspace_dir: &Path, config: &WorkspaceConfig) -> Resul
         "- After editing, validate with: `yq eval '.' {}/tasks.yaml > /dev/null && echo 'Valid' || echo 'Invalid'`\n",
         workspace_dir.display()
     ));
-    content.push_str("- If validation fails, fix the YAML before proceeding\n");
+    content.push_str("- If validation fails, fix the YAML before proceeding\n\n");
+
+    // PR creation guidance for architect
+    if !config.workflow.auto_create_pr {
+        content.push_str("## Pull Request Guidance\n\n");
+        content.push_str("Workers do NOT automatically create PRs after completing tasks.\n");
+        content.push_str("If a task requires a PR, **explicitly state it** in the task description:\n\n");
+        content.push_str("```yaml\ndescription: |\n  Implement feature X.\n  \n  **Create a PR when complete.**\n```\n\n");
+        content.push_str("Only request PRs when the changes should be reviewed or merged to main.\n");
+    }
 
     let role_path = workspace_dir.join("ARCHITECT.md");
     std::fs::write(&role_path, content)
@@ -790,23 +800,63 @@ fn write_lane_roles(workspace_dir: &Path, config: &WorkspaceConfig) -> Result<()
             content.push_str("2. Claim ONE task by moving it to `in_progress`\n");
             content.push_str("3. Create a branch following the naming convention above\n");
             content.push_str("4. Complete the task\n");
-            content.push_str("5. Create a PR with your changes\n");
+            if config.workflow.auto_create_pr {
+                content.push_str("5. Create a PR with your changes\n");
+            } else {
+                content.push_str("5. Only create a PR if the task or architect requests it\n");
+            }
             content.push_str("6. Move task to `done`, then claim the next task\n\n");
 
-            content.push_str("## Creating a Pull Request (REQUIRED)\n\n");
-            content.push_str("After completing a task, you MUST follow these steps:\n");
-            content.push_str(&format!(
-                "1. Create a branch: `git checkout -b {}/task-name`\n",
-                local_prefix
-            ));
-            content.push_str("2. Stage changes: `git add -A`\n");
-            content.push_str("3. Commit: `git commit -m \"description of changes\"`\n");
-            content.push_str(&format!(
-                "4. Push: `git push origin {}/task-name:{}/task-name`\n",
-                local_prefix, remote_prefix
-            ));
-            content.push_str("5. Create PR: `gh pr create --fill`\n");
-            content.push_str("6. **Verify the PR URL is displayed before stopping**\n\n");
+            // Uncommitted changes handling
+            match config.workflow.uncommitted_changes.as_str() {
+                "commit" => {
+                    content.push_str("## Before Starting New Work\n\n");
+                    content.push_str("If you have uncommitted changes from a previous task, commit them first.\n\n");
+                }
+                "error" => {
+                    content.push_str("## Before Starting New Work\n\n");
+                    content.push_str("If you have uncommitted changes from a previous task, STOP and ask the architect for guidance.\n\n");
+                }
+                _ => {
+                    content.push_str("## Before Starting New Work\n\n");
+                    content.push_str("If you have uncommitted changes from a previous task, stash them (`git stash`) before starting new work.\n\n");
+                }
+            }
+
+            if config.workflow.auto_create_pr {
+                content.push_str("## Creating a Pull Request (REQUIRED)\n\n");
+                content.push_str("After completing a task, you MUST follow these steps:\n");
+                content.push_str(&format!(
+                    "1. Create a branch: `git checkout -b {}/task-name`\n",
+                    local_prefix
+                ));
+                content.push_str("2. Stage changes: `git add -A`\n");
+                content.push_str("3. Commit: `git commit -m \"description of changes\"`\n");
+                content.push_str(&format!(
+                    "4. Push: `git push origin {}/task-name:{}/task-name`\n",
+                    local_prefix, remote_prefix
+                ));
+                content.push_str("5. Create PR: `gh pr create --fill`\n");
+                content.push_str("6. **Verify the PR URL is displayed before stopping**\n\n");
+            } else {
+                content.push_str("## Creating a Pull Request (When Requested)\n\n");
+                content.push_str("If the task or architect requests a PR, follow these steps:\n");
+                content.push_str(&format!(
+                    "1. Create a branch: `git checkout -b {}/task-name`\n",
+                    local_prefix
+                ));
+                content.push_str("2. Stage changes: `git add -A`\n");
+                content.push_str("3. Commit: `git commit -m \"description of changes\"`\n");
+                content.push_str(&format!(
+                    "4. Push: `git push origin {}/task-name:{}/task-name`\n",
+                    local_prefix, remote_prefix
+                ));
+                content.push_str("5. Create PR: `gh pr create --fill`\n\n");
+                content.push_str("## Completing a Task Without PR\n\n");
+                content.push_str("If no PR is requested, simply:\n");
+                content.push_str("1. Commit your changes to the current branch\n");
+                content.push_str("2. Move the task to `done` in tasks.yaml\n\n");
+            }
 
             content.push_str("## When Backlog is Empty\n\n");
             content.push_str("If your lane's backlog is empty, **STOP IMMEDIATELY**.\n");

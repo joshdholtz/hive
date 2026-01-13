@@ -7,7 +7,7 @@ use anyhow::Result;
 
 pub use parser::{
     find_config, load_config, ArchitectConfig, Backend, BranchConfig, HiveConfig, MessagesConfig,
-    TaskSource, TasksConfig, WindowConfig, WorkerConfig, WorkersConfig,
+    TaskSource, TasksConfig, WindowConfig, WorkerConfig, WorkersConfig, WorkflowConfig,
 };
 
 pub fn project_dir(config_path: &Path) -> PathBuf {

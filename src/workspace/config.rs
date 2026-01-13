@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{ArchitectConfig, Backend, WorkersConfig};
+use crate::config::{ArchitectConfig, Backend, WorkersConfig, WorkflowConfig};
 
 /// Layout configuration for pane sizing
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +46,9 @@ pub struct WorkspaceConfig {
     /// Layout configuration for pane sizing
     #[serde(default)]
     pub layout: LayoutConfig,
+    /// Workflow configuration for workers
+    #[serde(default)]
+    pub workflow: WorkflowConfig,
 }
 
 /// A project within a workspace
@@ -118,6 +121,7 @@ impl Default for WorkspaceConfig {
                 symlink: Vec::new(),
             },
             layout: LayoutConfig::default(),
+            workflow: WorkflowConfig::default(),
         }
     }
 }
@@ -239,12 +243,13 @@ mod tests {
 
     #[test]
     fn test_expand_workers_multiple() {
+        // One worker per lane: api, auth, tests = 3 workers
         let config = WorkspaceConfig {
             name: "test".to_string(),
             projects: vec![WorkspaceProject {
                 path: PathBuf::from("/code/repo"),
                 workers: 3,
-                lanes: vec!["api".to_string(), "auth".to_string()],
+                lanes: vec!["api".to_string(), "auth".to_string(), "tests".to_string()],
             }],
             ..Default::default()
         };

@@ -187,6 +187,20 @@ layout:
 
 Smaller `min_pane_width`/`min_pane_height` values = more panes fit on screen. Larger values = fewer but bigger panes.
 
+### Workflow Config
+
+```yaml
+workflow:
+  auto_create_pr: false      # Workers don't auto-create PRs (default: false)
+  uncommitted_changes: stash # How to handle uncommitted changes: stash, commit, error
+```
+
+- `auto_create_pr: false` (default) — Workers only create PRs when the task or architect explicitly requests it
+- `auto_create_pr: true` — Workers automatically create PRs after completing every task
+- `uncommitted_changes: stash` (default) — Stash uncommitted changes before starting new work
+- `uncommitted_changes: commit` — Commit uncommitted changes before starting new work
+- `uncommitted_changes: error` — Stop and ask architect for guidance if uncommitted changes exist
+
 Run `hive up` to create this interactively via the setup wizard.
 
 ### Task File Structure

@@ -655,6 +655,7 @@ fn create_compat_config(
         setup: None,
         messages: None,
         worker_instructions: None,
+        workflow: crate::config::WorkflowConfig::default(),
     }
 }
 

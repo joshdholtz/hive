@@ -40,9 +40,30 @@ pub fn run(start_dir: &Path, specific_worker: Option<&str>) -> Result<()> {
             content.push_str("## General Behavior\n");
             content.push_str("1. Check your task backlog and claim ONE task at a time\n");
             content.push_str("2. Implement the task completely\n");
-            content.push_str("3. **CRITICAL: You MUST create a Pull Request before stopping or claiming another task**\n");
-            content.push_str("4. If you have uncommitted changes from a previous task, create a PR for them FIRST\n");
-            content.push_str("5. Do NOT stop working until you see a PR URL displayed\n\n");
+            if config.workflow.auto_create_pr {
+                content.push_str("3. **CRITICAL: You MUST create a Pull Request before stopping or claiming another task**\n");
+                content.push_str("4. Do NOT stop working until you see a PR URL displayed\n\n");
+            } else {
+                content.push_str("3. Only create a PR if the task description or architect specifically requests it\n");
+                content.push_str("4. If no PR is needed, commit your changes and move the task to done\n\n");
+            }
+
+            // Uncommitted changes handling
+            match config.workflow.uncommitted_changes.as_str() {
+                "commit" => {
+                    content.push_str("## Before Starting New Work\n");
+                    content.push_str("If you have uncommitted changes from a previous task, commit them first.\n\n");
+                }
+                "error" => {
+                    content.push_str("## Before Starting New Work\n");
+                    content.push_str("If you have uncommitted changes from a previous task, STOP and ask the architect for guidance.\n\n");
+                }
+                _ => {
+                    // "stash" is default - don't add explicit instruction, just handle it
+                    content.push_str("## Before Starting New Work\n");
+                    content.push_str("If you have uncommitted changes from a previous task, stash them (`git stash`) before starting new work.\n\n");
+                }
+            }
             content.push_str("## When Backlog is Empty\n");
             content.push_str("If your lane's backlog is empty, **STOP IMMEDIATELY**.\n");
             content.push_str(&format!(
@@ -53,14 +74,28 @@ pub fn run(start_dir: &Path, specific_worker: Option<&str>) -> Result<()> {
             content.push_str("- Do NOT explore the codebase\n");
             content.push_str("- Do NOT make suggestions\n");
             content.push_str("- Simply wait for the architect to add tasks\n\n");
-            content.push_str("## Creating a Pull Request (REQUIRED)\n");
-            content.push_str("After completing a task, you MUST follow these steps:\n");
-            content.push_str("1. Create a branch: `git checkout -b <branch-name>`\n");
-            content.push_str("2. Stage changes: `git add -A`\n");
-            content.push_str("3. Commit: `git commit -m \"description of changes\"`\n");
-            content.push_str("4. Push: `git push -u origin <branch-name>`\n");
-            content.push_str("5. Create PR: `gh pr create --fill` or `gh pr create --title \"...\" --body \"...\"`\n");
-            content.push_str("6. **Verify the PR URL is displayed before stopping**\n\n");
+            if config.workflow.auto_create_pr {
+                content.push_str("## Creating a Pull Request (REQUIRED)\n");
+                content.push_str("After completing a task, you MUST follow these steps:\n");
+                content.push_str("1. Create a branch: `git checkout -b <branch-name>`\n");
+                content.push_str("2. Stage changes: `git add -A`\n");
+                content.push_str("3. Commit: `git commit -m \"description of changes\"`\n");
+                content.push_str("4. Push: `git push -u origin <branch-name>`\n");
+                content.push_str("5. Create PR: `gh pr create --fill` or `gh pr create --title \"...\" --body \"...\"`\n");
+                content.push_str("6. **Verify the PR URL is displayed before stopping**\n\n");
+            } else {
+                content.push_str("## Creating a Pull Request (When Requested)\n");
+                content.push_str("If the task or architect requests a PR, follow these steps:\n");
+                content.push_str("1. Create a branch: `git checkout -b <branch-name>`\n");
+                content.push_str("2. Stage changes: `git add -A`\n");
+                content.push_str("3. Commit: `git commit -m \"description of changes\"`\n");
+                content.push_str("4. Push: `git push -u origin <branch-name>`\n");
+                content.push_str("5. Create PR: `gh pr create --fill` or `gh pr create --title \"...\" --body \"...\"`\n\n");
+                content.push_str("## Completing a Task Without PR\n");
+                content.push_str("If no PR is requested, simply:\n");
+                content.push_str("1. Commit your changes to the current branch\n");
+                content.push_str("2. Move the task to `done` in tasks.yaml\n\n");
+            }
 
             if let Some(branch) = &worker.branch {
                 content.push_str("## Branch Naming Convention\n");
@@ -217,6 +252,15 @@ fn generate_architect_role(
             content.push_str("- After editing, validate with: `yq eval '.' <tasks-file> > /dev/null && echo 'Valid' || echo 'Invalid'`\n");
             content.push_str("- If validation fails, fix the YAML before proceeding\n\n");
         }
+    }
+
+    // PR creation guidance for architect
+    if !config.workflow.auto_create_pr {
+        content.push_str("## Pull Request Guidance\n\n");
+        content.push_str("Workers do NOT automatically create PRs after completing tasks.\n");
+        content.push_str("If a task requires a PR, **explicitly state it** in the task description:\n\n");
+        content.push_str("```yaml\ndescription: |\n  Implement feature X.\n  \n  **Create a PR when complete.**\n```\n\n");
+        content.push_str("Only request PRs when the changes should be reviewed or merged to main.\n\n");
     }
 
     content.push_str("---\n## Project-Specific Instructions\n");

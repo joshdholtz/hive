@@ -13,6 +13,9 @@ pub struct HiveConfig {
     pub setup: Option<Vec<String>>,
     pub messages: Option<MessagesConfig>,
     pub worker_instructions: Option<String>,
+    /// Workflow configuration for workers
+    #[serde(default)]
+    pub workflow: WorkflowConfig,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -84,6 +87,32 @@ pub struct BranchConfig {
 pub struct MessagesConfig {
     pub startup: Option<String>,
     pub nudge: Option<String>,
+}
+
+/// Workflow configuration for workers
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowConfig {
+    /// Whether workers should auto-create PRs after completing tasks (default: false)
+    /// If false, architect should specify in task description whether PR is needed
+    #[serde(default)]
+    pub auto_create_pr: bool,
+    /// What to do with uncommitted changes before starting new work
+    /// Options: "stash" (default), "commit", "error"
+    #[serde(default = "default_uncommitted_action")]
+    pub uncommitted_changes: String,
+}
+
+fn default_uncommitted_action() -> String {
+    "stash".to_string()
+}
+
+impl Default for WorkflowConfig {
+    fn default() -> Self {
+        Self {
+            auto_create_pr: false,
+            uncommitted_changes: default_uncommitted_action(),
+        }
+    }
 }
 
 pub fn load_config(path: &Path) -> Result<HiveConfig> {
