@@ -5,19 +5,707 @@ import json
 import os
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
+from hive.core.context import get_context
+
 SESSION_NAME = "hive-planner"
 
-# HTML template with xterm.js
+
+# Shared CSS for all pages
+SHARED_CSS = """
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+        --bg-primary: #0c0c0c;
+        --bg-secondary: #161616;
+        --bg-tertiary: #1c1c1c;
+        --bg-hover: #252525;
+        --border: #2a2a2a;
+        --text-primary: #fafafa;
+        --text-secondary: #a0a0a0;
+        --text-muted: #606060;
+        --accent: #f97316;
+        --accent-hover: #ea580c;
+        --accent-glow: rgba(249, 115, 22, 0.15);
+        --green: #22c55e;
+        --yellow: #eab308;
+        --purple: #a855f7;
+    }
+
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        min-height: 100vh;
+        min-height: 100dvh;
+        -webkit-font-smoothing: antialiased;
+    }
+
+    .container {
+        padding: 24px 16px;
+        padding-bottom: 100px;
+        max-width: 600px;
+        margin: 0 auto;
+    }
+
+    h1 {
+        font-size: 28px;
+        font-weight: 700;
+        margin-bottom: 8px;
+        color: var(--text-primary);
+        letter-spacing: -0.5px;
+    }
+
+    .subtitle {
+        font-size: 14px;
+        color: var(--text-muted);
+        margin-bottom: 24px;
+    }
+
+    /* Navigation tabs */
+    .nav-tabs {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 24px;
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 12px;
+    }
+
+    .nav-tab {
+        background: transparent;
+        color: var(--text-secondary);
+        border: none;
+        padding: 8px 16px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        border-radius: 8px;
+        transition: all 0.15s ease;
+        text-decoration: none;
+    }
+    .nav-tab:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+    }
+    .nav-tab.active {
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+    }
+
+    /* Cards */
+    .card {
+        background: var(--bg-secondary);
+        border-radius: 16px;
+        padding: 16px 20px;
+        margin-bottom: 10px;
+        border: 1px solid var(--border);
+        transition: all 0.2s ease;
+    }
+    .card:hover {
+        background: var(--bg-hover);
+        border-color: #3a3a3a;
+    }
+    .card.clickable {
+        cursor: pointer;
+    }
+    .card.clickable:active {
+        transform: scale(0.98);
+    }
+    a.card {
+        text-decoration: none;
+        color: inherit;
+        display: block;
+    }
+
+    .card-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 4px;
+    }
+
+    .card-meta {
+        font-size: 13px;
+        color: var(--text-muted);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .card-number {
+        color: var(--text-secondary);
+        font-family: 'SF Mono', Menlo, monospace;
+    }
+
+    .branch-name {
+        color: var(--text-muted);
+        font-family: 'SF Mono', Menlo, monospace;
+        font-size: 12px;
+    }
+
+    /* Labels/Tags */
+    .label {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 500;
+        background: var(--bg-tertiary);
+        color: var(--text-secondary);
+        margin-right: 6px;
+    }
+    .label.draft {
+        background: rgba(234, 179, 8, 0.15);
+        color: var(--yellow);
+    }
+    .label.repo {
+        background: rgba(168, 85, 247, 0.15);
+        color: var(--purple);
+    }
+
+    .section-title {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        color: var(--text-secondary);
+        margin: 28px 0 12px;
+        letter-spacing: 0.5px;
+        padding-left: 4px;
+    }
+
+    .empty-state {
+        color: var(--text-muted);
+        padding: 40px 20px;
+        text-align: center;
+        font-size: 15px;
+    }
+
+    /* Buttons */
+    .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 16px;
+        border-radius: 10px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        border: none;
+        text-decoration: none;
+    }
+    .btn-primary {
+        background: var(--accent);
+        color: white;
+    }
+    .btn-primary:hover {
+        background: var(--accent-hover);
+    }
+    .btn-secondary {
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+        border: 1px solid var(--border);
+    }
+    .btn-secondary:hover {
+        background: var(--bg-hover);
+    }
+
+    /* Refresh FAB */
+    .fab {
+        position: fixed;
+        bottom: 24px;
+        right: 24px;
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+        border: 1px solid var(--border);
+        border-radius: 50%;
+        width: 56px;
+        height: 56px;
+        font-size: 22px;
+        cursor: pointer;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+        transition: all 0.2s ease;
+    }
+    .fab:active {
+        transform: scale(0.9);
+        background: var(--bg-hover);
+    }
+
+    .status-msg {
+        position: fixed;
+        bottom: 100px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border);
+        padding: 12px 24px;
+        border-radius: 100px;
+        font-size: 14px;
+        font-weight: 500;
+        opacity: 0;
+        transition: opacity 0.3s;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    }
+    .status-msg.show { opacity: 1; }
+
+    /* Loading state */
+    .loading {
+        text-align: center;
+        padding: 40px;
+        color: var(--text-muted);
+    }
+
+    /* Scrollbar styling */
+    ::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+        background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+        background: var(--border);
+        border-radius: 3px;
+    }
+"""
+
+
+def _get_issues_data(context) -> list[dict]:
+    """Fetch open issues from the configured provider."""
+    issues = []
+
+    if not context.has_workspace():
+        return issues
+
+    try:
+        workspace = context.load_workspace()
+
+        from hive.providers import get_provider
+        from hive.providers.base import ProviderConfig as ProviderCfg
+
+        provider_cfg = ProviderCfg(
+            type=workspace.provider.type,
+            repo=workspace.provider.repo,
+            project=workspace.provider.project,
+            api_key_env=workspace.provider.api_key_env,
+        )
+
+        if provider_cfg.type == "github" and not provider_cfg.repo:
+            from hive.commands.issue_v2 import _get_repo_github_path
+            issues_repo_key = workspace.defaults.issues_repo
+            issues_repo = workspace.get_repo(issues_repo_key)
+            if issues_repo:
+                provider_cfg.repo = _get_repo_github_path(issues_repo.path)
+
+        provider = get_provider(provider_cfg)
+        provider_issues = provider.list_issues(state="open", limit=30)
+
+        for pi in provider_issues:
+            issues.append({
+                "number": pi.number,
+                "title": pi.title,
+                "labels": pi.labels,
+                "url": getattr(pi, 'url', f"https://github.com/{provider_cfg.repo}/issues/{pi.number}"),
+            })
+    except Exception:
+        pass
+
+    return issues
+
+
+def _get_prs_data(context) -> list[dict]:
+    """Fetch open PRs from all repos in workspace."""
+    prs = []
+
+    if not context.has_workspace():
+        return prs
+
+    try:
+        workspace = context.load_workspace()
+
+        def fetch_repo_prs(repo_key: str, repo_path) -> list[dict]:
+            result_prs = []
+            if not repo_path.exists():
+                return result_prs
+            try:
+                result = subprocess.run(
+                    ["gh", "pr", "list", "--json", "number,title,headRefName,url,isDraft", "--limit", "10"],
+                    cwd=repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    pr_data = json.loads(result.stdout)
+                    for pr in pr_data:
+                        result_prs.append({
+                            "number": pr["number"],
+                            "title": pr["title"],
+                            "repo": repo_key,
+                            "branch": pr["headRefName"],
+                            "url": pr["url"],
+                            "draft": pr.get("isDraft", False),
+                        })
+            except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
+                pass
+            return result_prs
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = {
+                executor.submit(fetch_repo_prs, key, cfg.path): key
+                for key, cfg in workspace.repos.items()
+            }
+            for future in as_completed(futures, timeout=15):
+                try:
+                    prs.extend(future.result())
+                except Exception:
+                    pass
+
+    except Exception:
+        pass
+
+    return prs
+
+
+def _get_workers_data() -> list[dict]:
+    """Get active worker windows from tmux."""
+    workers = []
+    try:
+        result = subprocess.run(
+            ["tmux", "list-windows", "-t", SESSION_NAME, "-F", "#{window_name}"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.strip().split("\n"):
+                window = line.strip()
+                if window and '-' in window and window not in ('planner', 'shell'):
+                    parts = window.split('-', 1)
+                    if len(parts) == 2:
+                        workers.append({
+                            "window": window,
+                            "task_id": parts[0],
+                            "repo": parts[1],
+                        })
+    except Exception:
+        pass
+    return workers
+
+
+# Tasks page template
+TASKS_TEMPLATE = """<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, interactive-widget=resizes-content">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Tasks - Hive</title>
+    <style>
+""" + SHARED_CSS + """
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+        }
+        .card-content {
+            flex: 1;
+            min-width: 0;
+        }
+        .card-actions {
+            display: flex;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+        .action-btn {
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+        }
+        .action-btn:active {
+            transform: scale(0.95);
+        }
+        .action-btn.primary {
+            background: var(--accent);
+            color: white;
+            border-color: var(--accent);
+        }
+        .action-btn.primary:hover {
+            background: var(--accent-hover);
+        }
+        .action-btn.danger {
+            color: #ef4444;
+            border-color: #ef4444;
+        }
+        .action-btn.danger:active {
+            background: rgba(239, 68, 68, 0.1);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Hive</h1>
+        <p class="subtitle">Manage your tasks</p>
+
+        <div class="nav-tabs">
+            <a href="/" class="nav-tab">Panes</a>
+            <a href="/tasks" class="nav-tab active">Tasks</a>
+            <a href="/prs" class="nav-tab">PRs</a>
+        </div>
+
+        <div id="workers-section"></div>
+        <div id="issues-section"></div>
+
+        <button class="fab" onclick="loadData()">↻</button>
+        <div id="status-msg" class="status-msg"></div>
+    </div>
+
+    <script>
+        function showStatus(msg) {
+            const el = document.getElementById('status-msg');
+            el.textContent = msg;
+            el.classList.add('show');
+            setTimeout(() => el.classList.remove('show'), 2000);
+        }
+
+        async function loadData() {
+            try {
+                const [workersRes, issuesRes] = await Promise.all([
+                    fetch('/api/workers'),
+                    fetch('/api/issues')
+                ]);
+                const workers = await workersRes.json();
+                const issues = await issuesRes.json();
+                renderWorkers(workers.workers);
+                renderIssues(issues.issues);
+                showStatus('Refreshed');
+            } catch (e) {
+                showStatus('Error loading data');
+            }
+        }
+
+        function renderWorkers(workers) {
+            const container = document.getElementById('workers-section');
+            if (!workers || workers.length === 0) {
+                container.innerHTML = '';
+                return;
+            }
+
+            let html = '<div class="section-title">Active Workers</div>';
+            workers.forEach(w => {
+                html += `
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-content">
+                                <div class="card-title">${w.window}</div>
+                                <div class="card-meta">
+                                    <span class="label repo">${w.repo}</span>
+                                    <span>Task #${w.task_id}</span>
+                                </div>
+                            </div>
+                            <div class="card-actions">
+                                <button class="action-btn" onclick="viewWorker('${w.window}')">View</button>
+                                <button class="action-btn danger" onclick="closeWorker('${w.window}')">Close</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+        }
+
+        function renderIssues(issues) {
+            const container = document.getElementById('issues-section');
+            if (!issues || issues.length === 0) {
+                container.innerHTML = '<div class="empty-state">No open issues</div>';
+                return;
+            }
+
+            let html = '<div class="section-title">Open Issues</div>';
+            issues.forEach(issue => {
+                const labels = (issue.labels || []).map(l =>
+                    `<span class="label">${l}</span>`
+                ).join('');
+                html += `
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-content">
+                                <div class="card-title">${issue.title}</div>
+                                <div class="card-meta">
+                                    <span class="card-number">#${issue.number}</span>
+                                    ${labels}
+                                </div>
+                            </div>
+                            <div class="card-actions">
+                                <a href="${issue.url}" target="_blank" class="action-btn">View</a>
+                                <button class="action-btn primary" onclick="startIssue(${issue.number})">Start</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+        }
+
+        function viewWorker(windowName) {
+            // Navigate to panes view with this window selected
+            window.location.href = '/?window=' + encodeURIComponent(windowName);
+        }
+
+        async function closeWorker(windowName) {
+            if (!confirm('Close worker ' + windowName + '?')) return;
+            showStatus('Closing ' + windowName + '...');
+            try {
+                const res = await fetch('/api/worker/' + encodeURIComponent(windowName), { method: 'DELETE' });
+                const data = await res.json();
+                if (data.error) {
+                    showStatus('Error: ' + data.error);
+                } else {
+                    showStatus('Closed!');
+                    setTimeout(() => loadData(), 500);
+                }
+            } catch (e) {
+                showStatus('Error closing worker');
+            }
+        }
+
+        async function startIssue(number) {
+            if (!confirm('Start working on issue #' + number + '?')) return;
+            showStatus('Starting issue #' + number + '...');
+            try {
+                const res = await fetch('/api/start/' + number, { method: 'POST' });
+                const data = await res.json();
+                if (data.error) {
+                    showStatus('Error: ' + data.error);
+                } else {
+                    showStatus('Started! Refreshing...');
+                    setTimeout(() => loadData(), 1000);
+                }
+            } catch (e) {
+                showStatus('Error starting issue');
+            }
+        }
+
+        loadData();
+    </script>
+</body>
+</html>
+"""
+
+
+# PRs page template
+PRS_TEMPLATE = """<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, interactive-widget=resizes-content">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>PRs - Hive</title>
+    <style>
+""" + SHARED_CSS + """
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Hive</h1>
+        <p class="subtitle">Pull requests across repos</p>
+
+        <div class="nav-tabs">
+            <a href="/" class="nav-tab">Panes</a>
+            <a href="/tasks" class="nav-tab">Tasks</a>
+            <a href="/prs" class="nav-tab active">PRs</a>
+        </div>
+
+        <div id="prs-list">
+            <div class="loading">Loading PRs...</div>
+        </div>
+
+        <button class="fab" onclick="loadPRs()">↻</button>
+        <div id="status-msg" class="status-msg"></div>
+    </div>
+
+    <script>
+        function showStatus(msg) {
+            const el = document.getElementById('status-msg');
+            el.textContent = msg;
+            el.classList.add('show');
+            setTimeout(() => el.classList.remove('show'), 2000);
+        }
+
+        async function loadPRs() {
+            try {
+                const res = await fetch('/api/prs');
+                const data = await res.json();
+                renderPRs(data.prs);
+                showStatus('Refreshed');
+            } catch (e) {
+                showStatus('Error loading PRs');
+            }
+        }
+
+        function renderPRs(prs) {
+            const container = document.getElementById('prs-list');
+
+            if (!prs || prs.length === 0) {
+                container.innerHTML = '<div class="empty-state">No open pull requests</div>';
+                return;
+            }
+
+            // Group by repo
+            const byRepo = {};
+            prs.forEach(pr => {
+                if (!byRepo[pr.repo]) byRepo[pr.repo] = [];
+                byRepo[pr.repo].push(pr);
+            });
+
+            let html = '';
+            for (const [repo, repoPRs] of Object.entries(byRepo)) {
+                html += `<div class="section-title">${repo}</div>`;
+                repoPRs.forEach(pr => {
+                    const draftLabel = pr.draft ? '<span class="label draft">Draft</span>' : '';
+                    html += `
+                        <a href="${pr.url}" target="_blank" class="card clickable">
+                            <div class="card-title">${pr.title}</div>
+                            <div class="card-meta">
+                                <span class="card-number">#${pr.number}</span>
+                                ${draftLabel}
+                                <span class="branch-name">${pr.branch}</span>
+                            </div>
+                        </a>
+                    `;
+                });
+            }
+            container.innerHTML = html;
+        }
+
+        loadPRs();
+    </script>
+</body>
+</html>
+"""
+
+
+# Panes page template with xterm.js
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, interactive-widget=resizes-content">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Hive</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
     <style>
@@ -66,7 +754,36 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         .subtitle {
             font-size: 14px;
             color: var(--text-muted);
-            margin-bottom: 32px;
+            margin-bottom: 24px;
+        }
+
+        .nav-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 24px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 12px;
+        }
+
+        .nav-tab {
+            background: transparent;
+            color: var(--text-secondary);
+            border: none;
+            padding: 8px 16px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: all 0.15s ease;
+            text-decoration: none;
+        }
+        .nav-tab:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+        .nav-tab.active {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
         }
 
         .pane-card {
@@ -129,40 +846,46 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         }
 
         #terminal-header {
-            background: var(--bg-secondary);
-            padding: 12px 16px;
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, transparent 100%);
+            padding: 8px 12px;
             display: flex;
             align-items: center;
-            gap: 12px;
-            border-bottom: 1px solid var(--border);
-            flex-shrink: 0;
+            gap: 8px;
+            z-index: 10;
+            pointer-events: none;
         }
 
         #back-btn {
-            background: transparent;
+            background: rgba(0,0,0,0.5);
             color: var(--accent);
             border: none;
-            padding: 8px 0;
-            font-size: 16px;
-            font-weight: 500;
+            padding: 6px 10px;
+            font-size: 14px;
+            font-weight: 600;
             cursor: pointer;
             display: flex;
             align-items: center;
             gap: 4px;
+            border-radius: 6px;
+            pointer-events: auto;
         }
         #back-btn:active {
             opacity: 0.7;
         }
 
         #current-pane {
-            font-size: 15px;
-            font-weight: 600;
+            font-size: 12px;
+            font-weight: 500;
             flex: 1;
             text-align: center;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
-            color: var(--text-primary);
+            color: rgba(255,255,255,0.6);
         }
 
         #terminal-container {
@@ -170,13 +893,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             background: #000;
             overflow: auto;
             -webkit-overflow-scrolling: touch;
+            position: relative;
         }
 
         #quick-keys {
             background: var(--bg-secondary);
-            padding: 10px 12px;
+            padding: 6px 8px;
             display: flex;
-            gap: 6px;
+            gap: 4px;
             overflow-x: auto;
             border-top: 1px solid var(--border);
             flex-shrink: 0;
@@ -187,9 +911,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             background: var(--bg-tertiary);
             color: var(--text-secondary);
             border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 8px 14px;
-            font-size: 13px;
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 12px;
             font-family: 'SF Mono', Menlo, monospace;
             cursor: pointer;
             white-space: nowrap;
@@ -202,9 +926,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
         #input-bar {
             background: var(--bg-secondary);
-            padding: 12px;
+            padding: 8px;
             display: flex;
-            gap: 10px;
+            gap: 8px;
             flex-shrink: 0;
             border-top: 1px solid var(--border);
         }
@@ -213,8 +937,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             flex: 1;
             background: var(--bg-primary);
             border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 14px 16px;
+            border-radius: 8px;
+            padding: 10px 12px;
             color: var(--text-primary);
             font-size: 16px;
             font-family: 'SF Mono', Menlo, monospace;
@@ -223,7 +947,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         }
         #input-text:focus {
             border-color: var(--accent);
-            box-shadow: 0 0 0 3px var(--accent-glow);
+            box-shadow: 0 0 0 2px var(--accent-glow);
         }
         #input-text::placeholder {
             color: var(--text-muted);
@@ -233,9 +957,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             background: var(--accent);
             color: white;
             border: none;
-            border-radius: 12px;
-            padding: 14px 24px;
-            font-size: 15px;
+            border-radius: 8px;
+            padding: 10px 16px;
+            font-size: 14px;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.15s ease;
@@ -301,6 +1025,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <div id="list-view">
         <h1>Hive</h1>
         <p class="subtitle">Select a pane to connect</p>
+        <div class="nav-tabs">
+            <a href="/" class="nav-tab active">Panes</a>
+            <a href="/tasks" class="nav-tab">Tasks</a>
+            <a href="/prs" class="nav-tab">PRs</a>
+        </div>
         <div id="panes-list"></div>
         <button id="refresh-btn" onclick="loadPanes()">↻</button>
         <div id="status-msg" class="status-msg"></div>
@@ -308,23 +1037,22 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     <div id="terminal-view">
         <div id="terminal-header">
-            <button id="back-btn" onclick="goBack()">‹ Back</button>
+            <button id="back-btn" onclick="goBack()">‹</button>
             <span id="current-pane"></span>
-            <div style="width: 50px;"></div>
         </div>
         <div id="terminal-container"></div>
         <div id="quick-keys">
-            <button class="quick-key" onclick="refreshPane()">🔄</button>
-            <button class="quick-key" onclick="sendSpecial('Enter')">↵ Enter</button>
+            <button class="quick-key" onclick="refreshPane()">↻</button>
+            <button class="quick-key" onclick="sendSpecial('Enter')">↵</button>
             <button class="quick-key" onclick="sendSpecial('C-c')">^C</button>
             <button class="quick-key" onclick="sendSpecial('C-d')">^D</button>
-            <button class="quick-key" onclick="sendSpecial('Tab')">Tab</button>
+            <button class="quick-key" onclick="sendSpecial('Tab')">⇥</button>
             <button class="quick-key" onclick="sendSpecial('Escape')">Esc</button>
             <button class="quick-key" onclick="sendSpecial('Up')">↑</button>
             <button class="quick-key" onclick="sendSpecial('Down')">↓</button>
         </div>
         <div id="input-bar">
-            <input type="text" id="input-text" placeholder="Type here..." autocomplete="off" autocapitalize="off" autocorrect="off">
+            <input type="text" id="input-text" placeholder="Type here..." autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send">
             <button id="send-btn" onclick="sendInput()">Send</button>
         </div>
     </div>
@@ -446,7 +1174,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 connectWebSocket(paneId);
             }, 50);
 
-            // Handle resize
+            // Handle resize (including mobile keyboard show/hide)
             const resizeHandler = () => {
                 if (fitAddon && term) {
                     fitAddon.fit();
@@ -454,6 +1182,21 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 }
             };
             window.addEventListener('resize', resizeHandler);
+
+            // Handle mobile keyboard via visualViewport API
+            if (window.visualViewport) {
+                window.visualViewport.addEventListener('resize', () => {
+                    // Update terminal view height to match visual viewport
+                    const vh = window.visualViewport.height;
+                    document.getElementById('terminal-view').style.height = vh + 'px';
+                    setTimeout(resizeHandler, 50);
+                });
+                window.visualViewport.addEventListener('scroll', () => {
+                    // Prevent iOS from scrolling the page when keyboard appears
+                    window.scrollTo(0, 0);
+                });
+            }
+
             term._resizeHandler = resizeHandler;
 
             // Focus input and setup enter key
@@ -537,6 +1280,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             if (term && term._resizeHandler) {
                 window.removeEventListener('resize', term._resizeHandler);
             }
+            // Reset terminal view height
+            document.getElementById('terminal-view').style.height = '';
             document.getElementById('terminal-view').classList.remove('active');
             document.getElementById('list-view').classList.remove('hidden');
             currentPane = null;
@@ -677,12 +1422,76 @@ def web(
 
     import aiohttp
 
+    # Get context for data fetching
+    root = ctx.obj.get("root") if ctx.obj else None
+    context = get_context(root=root)
+
     async def handle_index(request):
         return aiohttp_web.Response(text=HTML_TEMPLATE, content_type="text/html")
+
+    async def handle_tasks(request):
+        return aiohttp_web.Response(text=TASKS_TEMPLATE, content_type="text/html")
+
+    async def handle_prs_page(request):
+        return aiohttp_web.Response(text=PRS_TEMPLATE, content_type="text/html")
 
     async def handle_panes(request):
         panes = _get_panes()
         return aiohttp_web.json_response({"panes": panes})
+
+    async def handle_issues_api(request):
+        issues = _get_issues_data(context)
+        return aiohttp_web.json_response({"issues": issues})
+
+    async def handle_prs_api(request):
+        prs = _get_prs_data(context)
+        return aiohttp_web.json_response({"prs": prs})
+
+    async def handle_workers_api(request):
+        workers = _get_workers_data()
+        return aiohttp_web.json_response({"workers": workers})
+
+    async def handle_start_issue(request):
+        number = request.match_info["number"]
+        try:
+            # Run hive start in background
+            result = subprocess.run(
+                ["hive", "start", number, "--with-claude"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                return aiohttp_web.json_response({"success": True, "number": number})
+            else:
+                return aiohttp_web.json_response({
+                    "error": result.stderr or "Failed to start issue"
+                }, status=500)
+        except subprocess.TimeoutExpired:
+            return aiohttp_web.json_response({"error": "Timeout starting issue"}, status=500)
+        except Exception as e:
+            return aiohttp_web.json_response({"error": str(e)}, status=500)
+
+    async def handle_close_worker(request):
+        window_name = request.match_info["window"]
+        try:
+            # Close the tmux window (keeps worktree)
+            result = subprocess.run(
+                ["tmux", "kill-window", "-t", f"{SESSION_NAME}:{window_name}"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                return aiohttp_web.json_response({"success": True, "window": window_name})
+            else:
+                return aiohttp_web.json_response({
+                    "error": result.stderr or "Failed to close worker"
+                }, status=500)
+        except subprocess.TimeoutExpired:
+            return aiohttp_web.json_response({"error": "Timeout closing worker"}, status=500)
+        except Exception as e:
+            return aiohttp_web.json_response({"error": str(e)}, status=500)
 
     # Create temp directory for pipe files
     pipe_dir = Path(tempfile.gettempdir()) / "hive-web-pipes"
@@ -760,11 +1569,17 @@ def web(
         def capture_initial():
             """Capture current pane content for initial display."""
             result = subprocess.run(
-                ["tmux", "capture-pane", "-t", pane_id, "-p", "-e"],
+                ["tmux", "capture-pane", "-t", pane_id, "-p", "-e", "-J"],
                 capture_output=True,
                 text=True,
             )
-            return result.stdout if result.returncode == 0 else ""
+            if result.returncode != 0:
+                return ""
+            # Strip trailing empty lines but keep content intact
+            lines = result.stdout.rstrip('\n').split('\n')
+            while lines and not lines[-1].strip():
+                lines.pop()
+            return '\n'.join(lines) + '\n' if lines else ""
 
         async def tail_pipe():
             """Tail the pipe file and stream to websocket."""
@@ -860,7 +1675,14 @@ def web(
     # Create app
     app = aiohttp_web.Application()
     app.router.add_get("/", handle_index)
+    app.router.add_get("/tasks", handle_tasks)
+    app.router.add_get("/prs", handle_prs_page)
     app.router.add_get("/api/panes", handle_panes)
+    app.router.add_get("/api/issues", handle_issues_api)
+    app.router.add_get("/api/prs", handle_prs_api)
+    app.router.add_get("/api/workers", handle_workers_api)
+    app.router.add_post("/api/start/{number}", handle_start_issue)
+    app.router.add_delete("/api/worker/{window}", handle_close_worker)
     app.router.add_get("/ws/pane/{pane_id}", handle_websocket)
 
     # Get local IP for mobile access
