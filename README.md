@@ -22,6 +22,12 @@ Terminal-first multi-repo task orchestration CLI. Manage work across multiple gi
 ## Installation
 
 ```bash
+pip install git+https://github.com/joshdholtz/hive.git
+```
+
+Or for development:
+
+```bash
 git clone https://github.com/joshdholtz/hive.git
 cd hive
 python -m venv .venv
