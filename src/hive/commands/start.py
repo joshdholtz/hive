@@ -16,6 +16,7 @@ from hive.core.tmux import (
     create_session,
     create_window,
     is_inside_tmux,
+    run_tmux,
     send_keys,
     session_exists,
     switch_client,
