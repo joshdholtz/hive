@@ -98,6 +98,20 @@ def _get_key() -> str:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
+def _confirm(prompt: str) -> bool:
+    """Show inline confirmation prompt and wait for y/n.
+
+    Args:
+        prompt: The confirmation message to display.
+
+    Returns:
+        True if user pressed y, False otherwise.
+    """
+    print(f"\n  {Colors.YELLOW}{prompt} (y/n){Colors.RESET}", end="", flush=True)
+    key = _get_key()
+    return key.lower() == 'y'
+
+
 def _get_workers() -> list[Worker]:
     """Get active worker windows from tmux."""
     workers = []
@@ -538,19 +552,25 @@ def menu_loop(
                 # x = close window (keep worktree)
                 if workers and 0 <= selected_idx < len(workers):
                     worker = workers[selected_idx]
-                    message = _kill_worker(worker, clean=False, context=context)
-                    workers = _get_workers()
-                    if selected_idx >= len(workers):
-                        selected_idx = max(0, len(workers) - 1)
+                    if _confirm(f"Close {worker.window_name}?"):
+                        message = _kill_worker(worker, clean=False, context=context)
+                        workers = _get_workers()
+                        if selected_idx >= len(workers):
+                            selected_idx = max(0, len(workers) - 1)
+                    else:
+                        message = "Cancelled"
 
             elif key == 'X' and section == 'workers':
                 # X = close window AND clean worktree
                 if workers and 0 <= selected_idx < len(workers):
                     worker = workers[selected_idx]
-                    message = _kill_worker(worker, clean=True, context=context)
-                    workers = _get_workers()
-                    if selected_idx >= len(workers):
-                        selected_idx = max(0, len(workers) - 1)
+                    if _confirm(f"Close + clean {worker.window_name}?"):
+                        message = _kill_worker(worker, clean=True, context=context)
+                        workers = _get_workers()
+                        if selected_idx >= len(workers):
+                            selected_idx = max(0, len(workers) - 1)
+                    else:
+                        message = "Cancelled"
 
             elif key == '\t':  # Tab - switch section
                 if section == 'workers':

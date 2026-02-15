@@ -76,6 +76,10 @@ app.add_typer(pick_app, name="pick")
 from hive.commands.menu import menu_app
 app.add_typer(menu_app, name="menu")
 
+# Import and register web command
+from hive.commands.web import web
+app.command(name="web")(web)
+
 
 if __name__ == "__main__":
     app()

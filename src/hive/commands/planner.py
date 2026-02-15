@@ -30,6 +30,10 @@ def planner(
         bool,
         typer.Option("--no-menu", help="Don't start the interactive menu pane."),
     ] = False,
+    no_web: Annotated[
+        bool,
+        typer.Option("--no-web", help="Don't start the web UI server."),
+    ] = False,
 ) -> None:
     """Start or attach to the hive planner tmux session.
 
@@ -59,6 +63,7 @@ def planner(
                 context,
                 start_agent=not no_agent,
                 start_menu=not no_menu,
+                start_web=not no_web,
             )
             # Reopen windows for existing worktrees
             reopened = _reopen_task_windows(context, setup_commands)
@@ -89,6 +94,7 @@ def _create_planner_session(
     context,
     start_agent: bool = True,
     start_menu: bool = True,
+    start_web: bool = True,
 ) -> None:
     """Create the hive planner session with split panes."""
     target = f"{SESSION_NAME}:planner"
@@ -102,13 +108,13 @@ def _create_planner_session(
     )
 
     # At this point we have one pane (the original)
-    # Start Claude first in this pane
+    # Name it and start Claude
+    run_tmux(["select-pane", "-t", target, "-T", "claude"])
     if start_agent:
         run_tmux(["send-keys", "-t", target, "claude", "Enter"])
 
     if start_menu:
         # Split window horizontally - new pane on right (35%)
-        # Don't use -d so focus moves to the new (right) pane
         run_tmux([
             "split-window", "-t", target,
             "-h",  # horizontal split (side by side)
@@ -116,8 +122,8 @@ def _create_planner_session(
             "-c", str(context.root),
             "hive", "menu",  # command to run in new pane
         ])
+        run_tmux(["select-pane", "-T", "tasks"])  # Name the new pane
 
-        # Now we're focused on the right pane (menu)
         # Split it vertically for PRs (bottom 40%)
         run_tmux([
             "split-window", "-t", target,
@@ -126,9 +132,31 @@ def _create_planner_session(
             "-c", str(context.root),
             "hive", "menu", "prs",  # PR panel
         ])
+        run_tmux(["select-pane", "-T", "prs"])  # Name the new pane
+
+        # Split again for web server (tiny pane at bottom, 3 lines)
+        if start_web:
+            run_tmux([
+                "split-window", "-t", target,
+                "-v",  # vertical split
+                "-l", "3",  # just 3 lines tall
+                "-c", str(context.root),
+                "hive", "web",  # web server
+            ])
+            run_tmux(["select-pane", "-T", "web"])
 
         # Select back to Claude pane (leftmost)
         run_tmux(["select-pane", "-t", target, "-L"])
+        run_tmux(["select-pane", "-t", target, "-L"])
+    elif start_web:
+        # No menu but still want web - add small pane on right
+        run_tmux([
+            "split-window", "-t", target,
+            "-h",  # horizontal split
+            "-l", "30",  # narrow
+            "-c", str(context.root),
+            "hive", "web",
+        ])
         run_tmux(["select-pane", "-t", target, "-L"])
 
     # Create a shell window for manual commands
@@ -147,6 +175,8 @@ def _create_planner_session(
     if start_menu:
         typer.echo("  Right top: Workers/Issues menu")
         typer.echo("  Right bottom: PRs panel")
+    if start_web:
+        typer.echo("  Web UI: http://localhost:8080")
     typer.echo("  Shell window: manual commands")
 
 
@@ -206,8 +236,11 @@ def _reopen_task_windows(context, setup_commands: list[str]) -> list[str]:
                     "-p", "35",  # shell pane is 35%
                     "-c", str(repo_dir),
                 ])
-                # Select back to left pane
+                # Name the shell pane (currently selected after split)
+                run_tmux(["select-pane", "-T", "shell"])
+                # Select back to left pane and name it
                 run_tmux(["select-pane", "-t", target, "-L"])
+                run_tmux(["select-pane", "-T", "claude"])
 
                 reopened.append(window_name)
             except TmuxError:

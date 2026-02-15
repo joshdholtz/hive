@@ -4,6 +4,7 @@ import fnmatch
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -510,11 +511,20 @@ def _setup_tmux_windows(
                         "-p", "35",  # shell pane is 35%
                         "-c", str(worktree_path),
                     ])
+                    # Name the shell pane (currently selected after split)
+                    run_tmux(["select-pane", "-T", "shell"])
                     # Select back to left pane for Claude
                     run_tmux(["select-pane", "-t", target, "-L"])
 
-                # Start Claude in left pane
+                # Name and start Claude in left pane
+                run_tmux(["select-pane", "-T", "claude"])
                 send_keys(SESSION_NAME, window_name, claude_cmd)
+
+                # Wait briefly for Claude to initialize, then send task prompt
+                time.sleep(1)
+                task_prompt = "Read TASK.md to understand your task. Review the linked issues for full context and requirements. Then begin implementing the changes needed in this repo."
+                send_keys(SESSION_NAME, window_name, task_prompt)
+
                 if not json_output:
                     mode = " (yolo)" if claude_yolo else ""
                     typer.secho(f"  {window_name}: Claude + shell{mode}", fg="green")

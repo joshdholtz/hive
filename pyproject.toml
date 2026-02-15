@@ -18,6 +18,11 @@ dependencies = [
     "rich>=13.0.0",
 ]
 
+[project.optional-dependencies]
+web = [
+    "aiohttp>=3.9.0",
+]
+
 [project.scripts]
 hive = "hive.cli:app"
 
