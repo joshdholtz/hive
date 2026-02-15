@@ -1,27 +1,28 @@
 # Hive
 
-Terminal-first polyrepo coordinator. Orchestrates multi-repo work via plans stored in YAML, git worktrees, tmux sessions, and GitHub PR management.
+Terminal-first multi-repo task orchestration CLI. Manage work across multiple git repositories with worktrees, tmux, and GitHub/Linear integration.
 
 ## Features
 
-- **Workspace management**: Clone and manage multiple repositories from a GitHub organization
-- **Task isolation**: Each task gets isolated git worktrees, avoiding branch conflicts
-- **tmux integration**: Automatic session creation with windows per repo, dashboard, and concierge
-- **PR automation**: Create and manage PRs across multiple repos from a single plan
-- **LLM-friendly**: JSON output support for programmatic consumption
+- **Interactive TUI Dashboard** - Vim-style navigation for workers, issues, and PRs
+- **Git Worktree Isolation** - Each task gets isolated branches per repo
+- **Tmux Orchestration** - Automatic session/window/pane management
+- **Issue Providers** - GitHub and Linear support (pluggable)
+- **Claude Integration** - Optional AI assistant in worker panes
+- **Auto-close Umbrellas** - Close parent issues when all sub-issues complete
 
 ## Requirements
 
 - Python 3.11+
 - Git
-- tmux (optional, for session management)
-- GitHub CLI (`gh`) for PR operations
+- tmux
+- GitHub CLI (`gh`) for GitHub provider
+- Claude CLI (optional, for AI assistance)
 
 ## Installation
 
 ```bash
-# Clone and install in development mode
-git clone <repo-url>
+git clone https://github.com/joshdholtz/hive.git
 cd hive
 python -m venv .venv
 source .venv/bin/activate
@@ -30,125 +31,102 @@ pip install -e .
 
 ## Quick Start
 
-### 1. Initialize a workspace
-
-Clone repos from a GitHub organization:
-
-```bash
-hive init myorg --match "^api-" --clone
-```
-
-Or create `workspace.yaml` manually:
+### 1. Create workspace.yaml
 
 ```yaml
 schema_version: 1
+
 defaults:
   base_branch: main
+  issues_repo: my-project       # Where umbrella issues live
+  setup_commands:
+    - "mise trust"              # Run in new worktrees
+  claude_yolo: true             # Skip Claude permission prompts
+
 repos:
-  frontend:
-    path: ./repos/frontend
-  backend:
-    path: ./repos/backend
+  frontend: ./frontend
+  backend: ./backend
+  docs: ../docs
 ```
 
-### 2. Create a task plan
+### 2. Start the planner
 
 ```bash
-hive draft "Add user authentication"
+hive planner
 ```
 
-This creates `.tasks/<task-id>/plan.yaml`:
+This creates a tmux session with:
+- Left pane: Claude (planner agent)
+- Right top: Workers/Issues TUI
+- Right bottom: PRs panel
 
-```yaml
-schema_version: 1
-id: 2026-02-12-add-user-authentication
-title: Add user authentication
-branch: feature/2026-02-12-add-user-authentication
-repos:
-  frontend:
-    tasks:
-      - Add login form
-      - Add auth context
-  backend:
-    tasks:
-      - Add /auth/login endpoint
-      - Add JWT middleware
-```
-
-### 3. Apply the plan
-
-Creates git worktrees and tmux session:
+### 3. Create an issue
 
 ```bash
-hive apply 2026-02-12-add-user-authentication
+hive issue new "Add user auth" --repos frontend,backend
 ```
 
-Worktrees are created at `.wt/<task-id>/<repo>/`.
+Creates:
+- Umbrella issue in `issues_repo`
+- Sub-issues in each specified repo
 
-### 4. Work on the task
-
-Open the tmux session:
+### 4. Start working
 
 ```bash
-hive open 2026-02-12-add-user-authentication
+hive start <issue_number>
+# or use the TUI - press Enter on an issue
 ```
 
-Check status:
+Creates:
+- Git worktrees in `.hive/wt/<id>/<repo>/`
+- Tmux windows with Claude + shell panes
+- TASK.md with issue context
 
-```bash
-hive status 2026-02-12-add-user-authentication
-```
+### 5. Monitor PRs
 
-### 5. Create PRs
+The PR panel shows open PRs across all repos. Press:
+- `j/k` - Navigate
+- `Enter` - Open in browser
+- `u` - Show URL for copying
+- `r` - Refresh
 
-```bash
-hive pr create 2026-02-12-add-user-authentication
-```
+## TUI Keybindings
 
-### 6. Clean up
+### Workers/Issues Panel
+| Key | Action |
+|-----|--------|
+| `j/k` | Navigate up/down |
+| `Tab` | Switch section |
+| `Enter` | Jump to worker / Start issue |
+| `x` | Close worker (keep worktree) |
+| `X` | Close worker + clean worktree |
+| `r` | Refresh (auto-closes completed umbrellas) |
+| `q` | Quit |
 
-Remove worktrees when done (plan is preserved):
-
-```bash
-hive clean 2026-02-12-add-user-authentication --yes
-```
+### PRs Panel
+| Key | Action |
+|-----|--------|
+| `j/k` | Navigate |
+| `Enter` | Open PR in browser |
+| `u` | Show URL for copying |
+| `r` | Refresh |
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `hive init <org>` | Clone repos from GitHub org and generate workspace.yaml |
-| `hive doctor` | Check workspace health and dependencies |
-| `hive draft <title>` | Create a new task plan |
-| `hive list` | List all tasks |
-| `hive show <task-id>` | Display parsed plan |
-| `hive apply <task-id>` | Create worktrees and tmux session |
-| `hive open <task-id>` | Attach to tmux session |
-| `hive status <task-id>` | Show task status (git status per repo) |
-| `hive clean <task-id>` | Remove worktrees |
-| `hive pr create <task-id>` | Create PRs for all repos |
-| `hive pr status <task-id>` | Show PR status |
-| `hive issue create <task-id>` | Create umbrella GitHub issue |
-| `hive issue sync <task-id>` | Sync task status to umbrella issue |
+```bash
+hive planner              # Start planner session
+hive menu                 # Run TUI dashboard
+hive menu prs             # Run PRs panel only
 
-## Directory Structure
+hive issue new "title" --repos r1,r2   # Create umbrella + sub-issues
+hive issue list           # List umbrella issues
+hive issue sync <id>      # Sync status to GitHub
 
-```
-workspace/
-├── workspace.yaml          # Workspace configuration
-├── .hive/                   # Hive working directory (gitignored)
-│   ├── tasks/              # Task plans and state
-│   │   └── <task-id>/
-│   │       ├── plan.yaml   # Task plan
-│   │       ├── state.json  # Runtime state
-│   │       └── prs.json    # PR tracking
-│   └── wt/                 # Git worktrees
-│       └── <task-id>/
-│           ├── frontend/   # Worktree for frontend repo
-│           └── backend/    # Worktree for backend repo
-└── repos/                   # Main repository clones (or sibling dirs)
-    ├── frontend/
-    └── backend/
+hive start <id>           # Create worktrees + windows
+hive pick start           # Interactive issue picker
+
+hive clean <id> --yes     # Remove worktrees
+hive status <id>          # Show task status
 ```
 
 ## Configuration
@@ -157,83 +135,45 @@ workspace/
 
 ```yaml
 schema_version: 1
+
 defaults:
-  base_branch: main        # Default base branch for worktrees
+  base_branch: main
+  issues_repo: hive              # Repo key for umbrella issues
+  setup_commands:                # Run in new worktree windows
+    - "mise trust"
+  claude_yolo: true              # Use --dangerously-skip-permissions
+  symlink_files:                 # Symlink from main repo to worktrees
+    - ".env"
+    - ".envrc"
+
+# For Linear instead of GitHub:
+# provider:
+#   type: linear
+#   project: PROJECT_KEY
+#   api_key_env: LINEAR_API_KEY
+
 repos:
-  frontend:
-    path: ./repos/frontend
-    base_branch: develop   # Override per-repo
+  frontend: ./frontend
   backend:
-    path: ./repos/backend
+    path: ./backend
+    base_branch: develop         # Override per-repo
 ```
 
-### plan.yaml
+## Directory Structure
 
-```yaml
-schema_version: 1
-id: 2026-02-12-task-name
-title: Human-readable title
-branch: feature/branch-name
-repos:
-  frontend:
-    base_branch: main      # Override base branch
-    tasks:
-      - Task description
-    test: npm test         # Test command (informational)
-  backend:
-    tasks:
-      - Another task
-tmux:
-  enabled: true            # Default: true
-  windows:
-    include_dashboard: true
-    include_concierge: true
-pr:
-  enabled: true
-  draft: false
-issue:
-  enabled: true           # Enable umbrella issue tracking
-  repo: "org/hive"        # GitHub repo for the umbrella issue
-  sync_mode: "comment"    # "comment" or "body"
 ```
-
-## GitHub Umbrella Issues
-
-Hive can create a single "umbrella" GitHub issue to track a multi-repo task:
-
-```bash
-# Create umbrella issue
-hive issue create <task-id> --repo org/hive
-
-# Sync status to the issue
-hive issue sync <task-id>
+project/
+├── workspace.yaml
+├── .hive/
+│   ├── tasks/<id>/
+│   │   ├── issues.json    # Issue tracking
+│   │   └── state.json     # Task state
+│   └── wt/<id>/
+│       ├── frontend/      # Worktree
+│       └── backend/       # Worktree
+├── frontend/              # Main repos
+└── backend/
 ```
-
-The umbrella issue shows:
-- Task title and branch
-- Checklist of repos with PR links
-- Merge status per repo
-
-PRs created with `hive pr create` automatically include a "Tracks:" link to the umbrella issue.
-
-## JSON Output
-
-Most commands support `--json` for LLM-friendly output:
-
-```bash
-hive status <task-id> --json
-hive list --json
-hive pr status <task-id> --json
-```
-
-## Exit Codes
-
-| Code | Meaning |
-|------|---------|
-| 0 | Success |
-| 1 | General error |
-| 2 | Missing dependencies |
-| 3 | Invalid workspace configuration |
 
 ## Development
 
@@ -241,8 +181,8 @@ hive pr status <task-id> --json
 # Run tests
 pytest tests/ -v
 
-# Run specific test file
-pytest tests/test_tmux.py -v
+# Run specific test
+pytest tests/test_menu.py -v
 ```
 
 ## License

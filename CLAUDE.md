@@ -1,82 +1,101 @@
-# Mostly Good Metrics - Planner Hub
+# Hive - Multi-Repo Task Orchestration CLI
 
-> **IMPORTANT**: You are the **planner/orchestrator** for the Mostly Good Metrics project.
-> This `hive` repo is just the orchestration tool - your job is to help plan and coordinate
-> work across ALL the MGM repositories listed below. When asked "what project is this?",
-> the answer is **Mostly Good Metrics**, not "hive".
+## What is Hive?
 
-## What is Mostly Good Metrics?
+A terminal-first CLI tool for orchestrating work across multiple git repositories. It provides:
 
-A privacy-focused mobile analytics platform. We provide SDKs for iOS, Android, React Native, Flutter, Capacitor, and web - all feeding into a unified backend.
+- **Git worktree management** - Isolated branches per task
+- **Tmux session orchestration** - Automatic window/pane setup
+- **Issue tracking** - GitHub and Linear provider support
+- **Interactive TUI** - Dashboard for workers, issues, and PRs
 
-## Your Role as Planner
+## Architecture
 
-You help the developer:
-1. **Plan features** that span multiple repos
-2. **Create GitHub issues** using `hive issue new`
-3. **Coordinate work** across SDKs, backend, and docs
-4. **Track progress** on multi-repo tasks
-
-## Repositories
-
-| Repo | Description |
-|------|-------------|
-| **backend** | Core API server - metrics ingestion, storage, querying |
-| **mostly_good_metrics_js** | JavaScript/TypeScript SDK for web |
-| **mostly_good_metrics_swift_sdk** | Native iOS SDK (Swift) |
-| **mostly_good_metrics_android_sdk** | Native Android SDK (Kotlin) |
-| **mostly_good_metrics_react_native** | React Native SDK |
-| **mostly_good_metrics_flutter_sdk** | Flutter SDK |
-| **mostly_good_metrics_capacitor** | Capacitor plugin for hybrid apps |
-| **app_ios** | iOS demo/test application |
-| **docs** | Documentation website |
-| **mostly_good_proxy** | Proxy service for metrics collection |
-| **integration_tests** | End-to-end test suite |
-| **grafana** | Monitoring dashboards |
-| **tools** | Internal dev tools |
-| **setup** | Infrastructure/deployment |
-| **issues** | Issue tracking |
-| **hive** | This repo - orchestration tool (not the main project!) |
-
-## Hive Commands
-
-```bash
-# Start planning session
-hive planner
-
-# Create issues across repos
-hive issue new "Add user sessions" --repos backend,mostly_good_metrics_js,mostly_good_metrics_swift_sdk
-
-# Start working on an issue
-hive start <issue_number>
-hive pick start              # interactive picker
-
-# Check status
-hive issue list
-hive status <id>
-
-# Sync progress to GitHub
-hive issue sync <id>
+```
+src/hive/
+├── cli.py              # Main CLI entry point
+├── commands/           # CLI commands
+│   ├── menu.py         # Interactive TUI dashboard
+│   ├── planner.py      # Planner session management
+│   ├── start.py        # Start working on an issue
+│   ├── pick.py         # Interactive issue picker
+│   ├── issue_v2.py     # Issue management (new, list, sync)
+│   ├── clean.py        # Cleanup worktrees
+│   └── ...
+├── core/               # Core functionality
+│   ├── context.py      # Workspace context
+│   ├── workspace.py    # Workspace parsing/validation
+│   ├── tmux.py         # Tmux operations
+│   ├── git.py          # Git operations
+│   └── ...
+├── models/             # Data models
+│   └── workspace.py    # Workspace, RepoConfig, etc.
+└── providers/          # Issue provider abstraction
+    ├── base.py         # Abstract provider interface
+    ├── github.py       # GitHub provider (uses gh CLI)
+    └── linear.py       # Linear provider (GraphQL API)
 ```
 
-## Common Multi-Repo Tasks
+## Key Commands
 
-| Task Type | Typical Repos |
-|-----------|---------------|
-| New metric/event type | backend + all SDKs + docs |
-| API change | backend + affected SDKs |
-| New SDK feature | SDK repo + docs + integration_tests |
-| Bug fix in collection | backend + mostly_good_proxy |
-| Dashboard update | grafana + backend (if new queries) |
+```bash
+hive planner              # Start interactive planner session
+hive menu                 # TUI dashboard (workers, issues, PRs)
+hive issue new "title" --repos repo1,repo2  # Create umbrella + sub-issues
+hive start <issue_number> # Create worktrees and tmux windows
+hive pick start           # Interactive issue picker
+hive clean <id> --yes     # Remove worktrees
+```
 
-## Workflow
+## Workspace Configuration
 
-1. **Discuss** what needs to be done
-2. **Identify** which repos are involved
-3. **Create issues**: `hive issue new "title" --repos repo1,repo2,...`
-4. **Start work**: `hive start <issue_number>`
-5. **Implement** in each repo's worktree
-6. **Sync**: `hive issue sync <id>` to update GitHub
+Users create `workspace.yaml` in their project root:
 
----
-*You are the planner for Mostly Good Metrics. Help coordinate multi-repo work.*
+```yaml
+schema_version: 1
+
+defaults:
+  base_branch: main
+  issues_repo: my-project      # Repo for umbrella issues
+  setup_commands:
+    - "mise trust"             # Run in new worktrees
+  claude_yolo: true            # --dangerously-skip-permissions
+
+repos:
+  frontend: ./frontend
+  backend: ./backend
+  docs: ../docs
+```
+
+## Key Concepts
+
+- **Umbrella Issue**: Parent issue in issues_repo tracking multi-repo work
+- **Sub-Issues**: Per-repo issues linked to umbrella
+- **Workers**: Tmux windows with Claude + shell for each repo
+- **Worktrees**: Git worktrees in `.hive/wt/<task-id>/<repo>/`
+
+## Provider System
+
+Issue providers are pluggable:
+
+```python
+from hive.providers import get_provider
+from hive.providers.base import ProviderConfig
+
+config = ProviderConfig(type="github", repo="owner/repo")
+provider = get_provider(config)
+issues = provider.list_issues(state="open")
+```
+
+## Testing
+
+```bash
+pytest tests/ -v
+```
+
+## Development Tips
+
+- TUI code is in `menu.py` - uses raw terminal input (termios)
+- Tmux operations in `core/tmux.py` - wraps tmux CLI
+- Git worktree operations in `core/git.py`
+- Provider abstraction makes adding new issue trackers easy
